@@ -1,0 +1,198 @@
+// ============================================================
+// SISTEMA CSF OPERATIVA — dashboard.js
+// ============================================================
+
+async function renderDashboard() {
+  showLoader('pantalla-dashboard', 'Cargando dashboard...')
+  try {
+    const cuartelId = APP.cuartel?.id
+    if (!cuartelId) { el('pantalla-dashboard').innerHTML = '<div class="cargando">Sin cuartel asignado</div>'; return }
+
+    const hoy   = hoyISO()
+    const mes   = new Date().getMonth() + 1
+    const anio  = new Date().getFullYear()
+    const ini   = `${anio}-${String(mes).padStart(2,'0')}-01`
+    const fin   = hoy
+
+    // Cargar datos en paralelo
+    const [
+      { data: servicios },
+      { data: visitas },
+      { data: controles },
+      { data: incautaciones },
+      { data: personas },
+      { data: csf_activa },
+      { data: alertas },
+      { data: reportes_pend },
+      { data: puntos },
+    ] = await Promise.all([
+      APP.sb.from('servicios').select('id,estado,fecha').eq('cuartel_id', cuartelId).gte('fecha', ini),
+      APP.sb.from('visitas_puntos').select('punto_id,fecha,semana_iso').gte('fecha', ini),
+      APP.sb.from('controles_servicio').select('*').in('servicio_id',
+        (await APP.sb.from('servicios').select('id').eq('cuartel_id', cuartelId).gte('fecha', ini)).data?.map(s=>s.id)||[]),
+      APP.sb.from('incautaciones').select('valor_uf').in('servicio_id',
+        (await APP.sb.from('servicios').select('id').eq('cuartel_id', cuartelId).gte('fecha', ini)).data?.map(s=>s.id)||[]),
+      APP.sb.from('personas_registradas').select('tipo_resultado,tipo_delito,grupo_etario').in('servicio_id',
+        (await APP.sb.from('servicios').select('id').eq('cuartel_id', cuartelId).gte('fecha', ini)).data?.map(s=>s.id)||[]),
+      APP.sb.from('csf_mensual').select('*').eq('cuartel_id', cuartelId).eq('estado','publicada').order('fecha_vigencia_inicio',{ascending:false}).limit(1),
+      APP.sb.from('alertas').select('*').eq('cuartel_id', cuartelId).eq('visto', false).order('created_at',{ascending:false}).limit(10),
+      APP.sb.from('reportes_inteligencia').select('id').eq('cuartel_id', cuartelId).eq('estado','pendiente'),
+      APP.sb.from('puntos_territoriales').select('id,tipo,nombre,fvc_base').eq('cuartel_id', cuartelId).eq('activo',true),
+    ])
+
+    // KPIs básicos
+    const totalSvcs     = servicios?.length || 0
+    const pendientes    = servicios?.filter(s=>s.estado==='pendiente').length || 0
+    const totalUF       = (incautaciones||[]).reduce((a,i) => a+(i.valor_uf||0), 0)
+    const totalDetenidos = (personas||[]).filter(p=>p.tipo_resultado==='detencion').length
+    const totControles  = (controles||[]).reduce((a,c) => a+(c.identidad_preventivos||0)+(c.identidad_investigativos||0)+(c.migratorios||0)+(c.vehiculares||0),0)
+    const reportesPend  = reportes_pend?.length || 0
+
+    // CSF activa
+    const csf = csf_activa?.[0]
+    let visitasCSF = null
+    if (csf) {
+      const { data: vo } = await APP.sb.from('csf_visitas_ordenadas')
+        .select('*,punto:puntos_territoriales(nombre,tipo)')
+        .eq('csf_id', csf.id).order('fecha_ordenada')
+      visitasCSF = vo
+    }
+
+    // Puntos con atraso
+    const hoy_d = new Date(hoy)
+    const puntosAtraso = []
+    for (const p of (puntos||[])) {
+      const { data: ultVisita } = await APP.sb.from('visitas_puntos')
+        .select('fecha').eq('punto_id', p.id).order('fecha',{ascending:false}).limit(1)
+      const ult = ultVisita?.[0]?.fecha
+      const dias = ult ? Math.ceil((hoy_d - new Date(ult+'T12:00:00'))/864e5) : 999
+      const umbral = { 'diario':1,'2x_semana':4,'semanal':8,'quincenal':18,'mensual':35,'bimestral':65 }[p.fvc_base] || 35
+      if (dias > umbral) puntosAtraso.push({ ...p, dias, umbral })
+    }
+    puntosAtraso.sort((a,b) => b.dias - a.dias)
+
+    el('pantalla-dashboard').innerHTML = `
+      <div class="container">
+
+        <!-- Header -->
+        <div class="dash-header">
+          <div>
+            <h1 class="dash-titulo">${APP.cuartel?.nombre || 'Dashboard'}</h1>
+            <p class="dash-sub">Mes en curso · ${MESES_ES[new Date().getMonth()]} ${new Date().getFullYear()}</p>
+          </div>
+          <div class="dash-fecha">${formatFecha(hoy)}</div>
+        </div>
+
+        <!-- Alertas urgentes -->
+        ${puntosAtraso.length ? `
+        <div class="alertas-panel">
+          <div class="alertas-titulo">⚠ Puntos con atraso en visitas</div>
+          ${puntosAtraso.slice(0,5).map(p => `
+            <div class="alerta-item alerta-${p.dias > p.umbral*2 ? 'critica':'media'}">
+              <span class="badge-tipo">${p.tipo.toUpperCase()}</span>
+              <strong>${p.nombre}</strong>
+              <span>— ${p.dias === 999 ? 'Sin visitas registradas' : `${p.dias} días sin visita`}</span>
+              <span class="alerta-fvc">(FVC: ${CSF_CONFIG.FVC_LABELS[p.fvc_base]})</span>
+            </div>
+          `).join('')}
+        </div>` : ''}
+
+        ${(alertas||[]).filter(a=>a.tipo==='cohecho').length ? `
+        <div class="alerta-cohecho">
+          🚨 ALERTA INSTITUCIONAL — COHECHO DETECTADO — Notificar cadena de mando
+        </div>` : ''}
+
+        <!-- KPIs -->
+        <div class="kpi-grid">
+          ${kpiCard('Servicios del mes', totalSvcs, pendientes > 0 ? `${pendientes} pendientes` : 'Al día', pendientes > 0 ? 'warn' : 'ok')}
+          ${kpiCard('Controles ejecutados', totControles.toLocaleString('es-CL'), 'Este mes', 'neutral')}
+          ${kpiCard('Detenidos', totalDetenidos, 'Este mes', totalDetenidos > 0 ? 'ok' : 'neutral')}
+          ${kpiCard('UF Incautadas', totalUF.toFixed(1), 'Este mes', totalUF > 0 ? 'ok' : 'neutral')}
+          ${kpiCard('Rep. Inteligencia', reportesPend, reportesPend > 0 ? 'Pendientes' : 'Al día', reportesPend > 0 ? 'warn' : 'ok')}
+        </div>
+
+        <!-- CSF Activa -->
+        ${csf ? `
+        <div class="card card-csf">
+          <div class="card-header-csf">
+            <div>
+              <div class="csf-numero">${csf.numero}</div>
+              <div class="csf-vigencia">Vigente hasta ${formatFechaCorta(csf.fecha_vigencia_fin)}</div>
+            </div>
+            <button class="btn btn-secundario" onclick="navegarA('csf')">Ver CSF completa →</button>
+          </div>
+          ${visitasCSF ? seguimientoMiniCSF(visitasCSF, hoy) : ''}
+        </div>` : `
+        <div class="card card-sin-csf">
+          <div>📄 Sin CSF activa para este período</div>
+          ${APP.esComisario() ? `<button class="btn btn-primario" onclick="navegarA('csf')">Generar CSF →</button>` : ''}
+        </div>`}
+
+        <!-- Visitas por tipo de punto -->
+        <div class="card">
+          <div class="sec-titulo">Visitas este mes por tipo de punto</div>
+          ${resumenVisitasPorTipo(visitas||[], puntos||[])}
+        </div>
+
+      </div>`
+  } catch(e) {
+    el('pantalla-dashboard').innerHTML = `<div class="cargando">Error: ${e.message}</div>`
+  }
+}
+
+function kpiCard(label, valor, sub, tipo) {
+  const colors = { ok:'var(--verde)', warn:'var(--amarillo)', neutral:'var(--text)', critico:'var(--rojo)' }
+  return `
+    <div class="kpi-card">
+      <div class="kpi-valor" style="color:${colors[tipo]||colors.neutral}">${valor}</div>
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-sub">${sub}</div>
+    </div>`
+}
+
+function seguimientoMiniCSF(visitas, hoy) {
+  const hoy_d = new Date(hoy)
+  const puntos_unicos = [...new Set(visitas.map(v => v.punto_id))]
+  const rows = puntos_unicos.slice(0, 6).map(pid => {
+    const pvs = visitas.filter(v => v.punto_id === pid)
+    const nombre = pvs[0]?.punto?.nombre || '—'
+    const pasadas = pvs.filter(v => new Date(v.fecha_ordenada) <= hoy_d)
+    const ejecutadas = pvs.filter(v => v.estado === 'ejecutada' && new Date(v.fecha_ordenada) <= hoy_d)
+    const pct = pasadas.length > 0 ? Math.round((ejecutadas.length / pasadas.length) * 100) : 100
+    const color = pct >= 90 ? 'var(--verde)' : pct >= 70 ? 'var(--amarillo)' : 'var(--rojo)'
+    return `
+      <div class="csf-seguimiento-row">
+        <span class="csf-punto-nombre">${nombre}</span>
+        <div class="csf-barra-wrap">
+          <div class="csf-barra" style="width:${pct}%;background:${color}"></div>
+        </div>
+        <span class="csf-pct" style="color:${color}">${pct}%</span>
+      </div>`
+  }).join('')
+  return `<div class="csf-seguimiento">${rows}</div>`
+}
+
+function resumenVisitasPorTipo(visitas, puntos) {
+  const puntoMap = {}
+  puntos.forEach(p => { puntoMap[p.id] = p.tipo })
+  const cont = { hito: new Set(), pnh: new Set(), sie: new Set() }
+  visitas.forEach(v => {
+    const tipo = puntoMap[v.punto_id]
+    if (tipo) cont[tipo].add(v.punto_id + '_' + v.fecha)
+  })
+  return `
+    <div class="tipo-visitas-grid">
+      <div class="tipo-visita-card tipo-hito">
+        <div class="tipo-num">${cont.hito.size}</div>
+        <div class="tipo-label">Visitas a Hitos</div>
+      </div>
+      <div class="tipo-visita-card tipo-pnh">
+        <div class="tipo-num">${cont.pnh.size}</div>
+        <div class="tipo-label">Fiscalizaciones PNH</div>
+      </div>
+      <div class="tipo-visita-card tipo-sie">
+        <div class="tipo-num">${cont.sie.size}</div>
+        <div class="tipo-label">Visitas SIE</div>
+      </div>
+    </div>`
+}
