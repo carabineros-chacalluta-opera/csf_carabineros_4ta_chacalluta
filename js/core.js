@@ -243,7 +243,7 @@ function mostrarLogin() {
 
 function mostrarApp() {
   el('pantalla-login').style.display = 'none'
-  el('app-shell').style.display      = 'block'
+  el('app-shell').style.display      = 'grid'
   construirNavegacion()
   mostrarPantalla('dashboard')
   renderDashboard()
