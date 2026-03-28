@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="theme-color" content="#1D7D4D"/>
+  <title>CSF Operativa — Prefectura Arica Nro. 1</title>
+  <link rel="stylesheet" href="css/csf.css"/>
+  <link rel="manifest" href="manifest.json"/>
+  <link rel="preconnect" href="https://fonts.bunny.net"/>
+  <link href="https://fonts.bunny.net/css?family=instrument-sans:400,500,600,700" rel="stylesheet"/>
+</head>
+<body>
+
+<!-- ══ PANTALLA LOGIN ═══════════════════════════════════════ -->
+<div id="pantalla-login">
+  <div class="login-lado-verde">
+    <div class="login-escudo">
+      <svg viewBox="0 0 80 80" width="72" height="72" fill="none">
+        <circle cx="40" cy="40" r="38" stroke="rgba(255,255,255,.35)" stroke-width="1.5"/>
+        <circle cx="40" cy="40" r="30" stroke="rgba(255,255,255,.2)" stroke-width="1"/>
+        <text x="40" y="52" text-anchor="middle" font-size="32" fill="white">🏔</text>
+      </svg>
+    </div>
+    <div class="login-inst-nombre">CARABINEROS DE CHILE</div>
+    <div class="login-inst-divider"></div>
+    <div class="login-inst-sistema">CSF OPERATIVA</div>
+    <div class="login-inst-sub">Sistema de Carta de Situación Fronteriza<br/>Prefectura Arica Nro. 1</div>
+    <div class="login-inst-pie">Uso interno — Personal autorizado</div>
+  </div>
+
+  <div class="login-lado-form">
+    <div class="login-form-wrap">
+      <div class="login-form-header">
+        <div class="login-form-titulo">Iniciar sesión</div>
+        <div class="login-form-sub">Ingrese sus credenciales institucionales</div>
+      </div>
+      <div class="login-campo">
+        <label for="login-email">Correo electrónico</label>
+        <input id="login-email" type="email" placeholder="usuario@carabineros.cl" autocomplete="email"/>
+      </div>
+      <div class="login-campo">
+        <label for="login-pass">Contraseña</label>
+        <input id="login-pass" type="password" placeholder="••••••••" autocomplete="current-password"/>
+      </div>
+      <div id="login-error" class="login-error"></div>
+      <button id="login-btn" class="btn btn-primario btn-full" onclick="hacerLogin()">
+        Ingresar al sistema
+      </button>
+      <div class="login-aviso">
+        <span class="login-aviso-icono">⚿</span>
+        Conexión cifrada · Registro de accesos activo
+      </div>
+    </div>
+    <div class="login-footer-form">
+      Sistema CSF Operativa v1.3 · Prefectura Arica Nro. 1
+    </div>
+  </div>
+</div>
+
+<!-- ══ APP SHELL ════════════════════════════════════════════ -->
+<div id="app-shell" style="display:none">
+
+  <!-- TOPBAR -->
+  <header id="topbar">
+    <div class="topbar-izq">
+      <button class="mob-menu-btn" id="mob-menu-btn" onclick="toggleSidebar()" title="Menú">
+        <span class="hamburger"></span>
+      </button>
+      <div class="topbar-brand">
+        <div class="topbar-escudo">C</div>
+        <div class="topbar-textos">
+          <span class="topbar-logo">CSF OPERATIVA</span>
+          <span class="topbar-sub">Prefectura Arica Nro. 1</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="topbar-cuartel-wrap">
+      <span class="topbar-cuartel-label">Unidad:</span>
+      <span id="topbar-cuartel" class="topbar-cuartel-nombre"></span>
+    </div>
+
+    <div class="topbar-der">
+      <span id="topbar-rol" class="topbar-rol-badge"></span>
+      <button id="topbar-user-btn" class="topbar-user-btn" onclick="mostrarMenuUsuario()">
+        <span class="topbar-user-avatar" id="topbar-user-avatar">—</span>
+        <span id="topbar-user-label" class="topbar-user-name">Mi cuenta</span>
+        <span class="topbar-chevron">▾</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- SIDEBAR -->
+  <nav id="sidebar">
+    <div class="sidebar-seccion-label">Navegación</div>
+    <div id="nav-items"></div>
+    <div class="sidebar-footer">
+      <div id="sidebar-rol" class="sidebar-rol-txt"></div>
+      <button class="btn-cerrar-sesion" onclick="cerrarSesion()">
+        Cerrar sesión
+      </button>
+    </div>
+  </nav>
+
+  <!-- OVERLAY móvil -->
+  <div id="sidebar-overlay" onclick="toggleSidebar()"></div>
+
+  <!-- MAIN -->
+  <main id="main-content">
+    <div id="pantalla-dashboard" class="pantalla"></div>
+    <div id="pantalla-servicios" class="pantalla"></div>
+    <div id="pantalla-csf"       class="pantalla"></div>
+    <div id="pantalla-reportes"  class="pantalla"></div>
+    <div id="pantalla-admin"     class="pantalla"></div>
+  </main>
+
+</div>
+
+<!-- mob-nav FUERA del app-shell -->
+<nav id="mob-nav"></nav>
+
+<!-- ══ SCRIPTS ══════════════════════════════════════════════ -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/core.js"></script>
+<script src="js/pages/login.js"></script>
+<script src="js/pages/dashboard.js"></script>
+<script src="js/pages/servicios.js"></script>
+<script src="js/pages/csf.js"></script>
+<script src="js/pages/reportes.js"></script>
+<script src="js/pages/admin.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+  await iniciarApp()
+  APP.sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT') mostrarLogin()
+    if (event === 'SIGNED_IN' && session) cargarPerfil(session.user.id)
+  })
+})
+
+function toggleSidebar() {
+  const s = document.getElementById('sidebar')
+  const o = document.getElementById('sidebar-overlay')
+  s.classList.toggle('sidebar-open')
+  o.classList.toggle('visible')
+}
+
+function mostrarMenuUsuario() {
+  if (confirm('¿Desea cerrar sesión?')) cerrarSesion()
+}
+
+const _origMostrarApp = mostrarApp
+window.mostrarApp = function() {
+  _origMostrarApp()
+  const cuartel = APP.cuartel?.nombre || ''
+  const email   = APP.perfil?.email || ''
+  const user    = email.split('@')[0] || 'Usuario'
+  const rol     = (APP.perfil?.rol || '').toUpperCase()
+  const initials= user.substring(0,2).toUpperCase()
+
+  const el = id => document.getElementById(id)
+  if (el('topbar-cuartel'))     el('topbar-cuartel').textContent     = cuartel
+  if (el('topbar-user-label'))  el('topbar-user-label').textContent  = user
+  if (el('topbar-user-avatar')) el('topbar-user-avatar').textContent = initials
+  if (el('topbar-rol'))         el('topbar-rol').textContent         = rol
+  if (el('sidebar-rol'))        el('sidebar-rol').textContent        = 'Sesión: ' + email
+}
+</script>
+</body>
+</html>
