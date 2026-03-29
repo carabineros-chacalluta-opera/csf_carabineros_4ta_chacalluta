@@ -82,16 +82,40 @@ async function renderServicios() {
       <!-- Modal carga Excel -->
       <div id="modal-excel" class="modal" style="display:none">
         <div class="modal-box">
-          <div class="modal-titulo">Cargar Excel de Servicios</div>
-          <p style="font-size:.82rem;color:var(--muted);margin:.5rem 0 1rem">
-            Sube el Excel mensual de servicios del sistema oficial.
-            El sistema importará automáticamente los servicios relevantes.
-          </p>
-          <input type="file" id="input-excel" accept=".xlsx,.xls" class="input-file"/>
-          <div id="excel-resultado" style="font-size:.8rem;margin-top:.5rem"></div>
-          <div style="display:flex;gap:.5rem;margin-top:1rem">
-            <button class="btn btn-primario" onclick="procesarExcel()">Importar</button>
-            <button class="btn btn-secundario" onclick="el('modal-excel').style.display='none'">Cancelar</button>
+          <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1rem">
+            <div class="modal-titulo">Cargar Excel de Servicios</div>
+            <button onclick="el('modal-excel').style.display='none'" class="btn-cerrar">✕</button>
+          </div>
+
+          <!-- Paso 1: Descargar plantilla -->
+          <div style="background:var(--verde-cl2,#F0F9F3);border:1px solid var(--verde-mid,#C2DECE);border-radius:var(--r,8px);padding:.9rem 1rem;margin-bottom:1rem">
+            <div style="font-size:.76rem;font-weight:700;color:var(--verde-osc,#155C38);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.05em">
+              Paso 1 — Descargar plantilla
+            </div>
+            <p style="font-size:.8rem;color:var(--muted,#5A6B62);margin-bottom:.65rem;line-height:1.5">
+              Descarga la plantilla con el formato correcto. Completa los datos y luego súbela en el paso 2.
+            </p>
+            <button class="btn btn-secundario btn-sm" onclick="descargarPlantillaExcel()">
+              ↓ Descargar plantilla .xlsx
+            </button>
+          </div>
+
+          <!-- Paso 2: Subir archivo -->
+          <div style="background:var(--surface-2,#F8FAF9);border:1px solid var(--border-light,#DDE8E2);border-radius:var(--r,8px);padding:.9rem 1rem;margin-bottom:1rem">
+            <div style="font-size:.76rem;font-weight:700;color:var(--muted,#5A6B62);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.05em">
+              Paso 2 — Subir archivo completado
+            </div>
+            <input type="file" id="input-excel" accept=".xlsx,.xls" class="input-file" style="margin-bottom:.4rem"/>
+            <p style="font-size:.72rem;color:var(--muted-light,#8A9E94);line-height:1.4">
+              Solo se importarán filas con tipos de servicio reconocidos por el sistema.
+            </p>
+          </div>
+
+          <div id="excel-resultado" style="font-size:.8rem;margin-bottom:.75rem"></div>
+
+          <div style="display:flex;gap:.5rem">
+            <button class="btn btn-primario" onclick="procesarExcel()">↑ Importar servicios</button>
+            <button class="btn btn-ghost" onclick="el('modal-excel').style.display='none'">Cancelar</button>
           </div>
         </div>
       </div>
@@ -124,6 +148,44 @@ function filaServicio(s) {
 // ── CARGA EXCEL ──────────────────────────────────────────────
 function abrirCargaExcel() {
   el('modal-excel').style.display = 'flex'
+}
+
+function descargarPlantillaExcel() {
+  const TIPOS = CSF_CONFIG.SERVICIOS_CSF
+  const headers = ["FECHA","TIPO DE SERVICIO","HORARIO (HH:MM-HH:MM)","CANTIDAD FUNCIONARIOS","CANTIDAD VEHÍCULOS"]
+  const hoy   = new Date()
+  const fecha = `${hoy.getDate().toString().padStart(2,"0")}/${(hoy.getMonth()+1).toString().padStart(2,"0")}/${hoy.getFullYear()}`
+  const ejemplos = TIPOS.map(tipo => [fecha, tipo, "08:00-16:00", 2, 1])
+  const instrucciones = [
+    ["INSTRUCCIONES — PLANTILLA CSF OPERATIVA"],
+    [""],
+    ["COLUMNA","DESCRIPCIÓN","FORMATO","EJEMPLO"],
+    ["FECHA","Fecha del servicio","DD/MM/AAAA",fecha],
+    ["TIPO DE SERVICIO","Debe ser exactamente uno de los tipos válidos (ver abajo)","Texto",TIPOS[0]],
+    ["HORARIO","Hora inicio y término separados por guión","HH:MM-HH:MM","08:00-16:00"],
+    ["CANTIDAD FUNCIONARIOS","Número entero","Número","2"],
+    ["CANTIDAD VEHÍCULOS","Número entero","Número","1"],
+    [""],
+    ["TIPOS DE SERVICIO VÁLIDOS:"],
+    ...TIPOS.map(t => ["",t]),
+    [""],
+    ["NOTAS:"],
+    ["","• La primera fila (encabezado) no se importa."],
+    ["","• Si un servicio ya existe (misma fecha + tipo + hora), se actualiza sin duplicar."],
+    ["","• Los servicios importados quedan en estado PENDIENTE."],
+  ]
+  const wb = XLSX.utils.book_new()
+  const wsData = [headers, ...ejemplos]
+  const ws = XLSX.utils.aoa_to_sheet(wsData)
+  ws["!cols"] = [{wch:14},{wch:46},{wch:22},{wch:22},{wch:18}]
+  XLSX.utils.book_append_sheet(wb, ws, "Plantilla")
+  const wsInst = XLSX.utils.aoa_to_sheet(instrucciones)
+  wsInst["!cols"] = [{wch:28},{wch:55},{wch:20},{wch:20}]
+  XLSX.utils.book_append_sheet(wb, wsInst, "Instrucciones")
+  const mes  = String(hoy.getMonth()+1).padStart(2,"0")
+  const anio = hoy.getFullYear()
+  XLSX.writeFile(wb, `Plantilla_Servicios_CSF_${anio}${mes}.xlsx`)
+  toast("Plantilla descargada correctamente", "ok")
 }
 
 async function procesarExcel() {
