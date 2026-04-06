@@ -6,8 +6,8 @@
 const CSF_CONFIG = {
 
   // ── SUPABASE (reemplazar con tus credenciales) ────────────
-  SUPABASE_URL:      'https://vernoovotmyfmngkmqkk.supabase.co',
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlcm5vb3ZvdG15Zm1uZ2ttcWtrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NDMzNTAsImV4cCI6MjA5MDAxOTM1MH0.Bc-3exE4rK4ZeMJrW3kbFGTeMZsHI7sdON2J5cRcVyw',
+  SUPABASE_URL:      'https://kcsqvhhqninmrttfhirm.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtjc3F2aGhxbmlubXJ0dGZoaXJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1MDA1NzgsImV4cCI6MjA5MTA3NjU3OH0.zXGDSVqHDnFuCWj18SE6_qCLEVYl1zs0oHTASMIrsi4',
 
   // ── SISTEMA ──────────────────────────────────────────────
   NOMBRE_SISTEMA:     'CSF OPERATIVA',
