@@ -8,8 +8,11 @@
 async function renderDashboard() {
   showLoader('pantalla-dashboard', 'Cargando dashboard...')
   try {
-    const cuartelId = APP.cuartel?.id
-    if (!cuartelId) {
+    // FIX B-CUARTEL: usar cuartel activo (puede ser null = todos)
+    const cuartelActivo = APP.cuartelActivo()
+    const cuartelId     = cuartelActivo?.id
+
+    if (!cuartelId && !APP.esAdministrador() && !APP.esComisario()) {
       el('pantalla-dashboard').innerHTML = '<div class="cargando">Sin cuartel asignado</div>'
       return
     }
@@ -19,10 +22,17 @@ async function renderDashboard() {
     const anio = new Date().getFullYear()
     const ini  = `${anio}-${String(mes).padStart(2,'0')}-01`
 
+    // FIX B-CUARTEL: helper para agregar filtro de cuartel solo si está definido
+    const filtroCuartel = (query) =>
+      cuartelId ? query.eq('cuartel_id', cuartelId) : query
+
     // B1: obtener IDs de servicios UNA sola vez
-    const { data: svcsBase } = await APP.sb
+    let svcsQuery = APP.sb
       .from('servicios').select('id,estado,fecha,tipo_servicio')
-      .eq('cuartel_id', cuartelId).gte('fecha', ini)
+      .gte('fecha', ini)
+    svcsQuery = filtroCuartel(svcsQuery)
+
+    const { data: svcsBase } = await svcsQuery
     const svcIds    = (svcsBase || []).map(s => s.id)
     const servicios = svcsBase || []
 
@@ -37,6 +47,7 @@ async function renderDashboard() {
       { data: reportes_pend },
       { data: puntos },
     ] = await Promise.all([
+      // FIX B-FECHA: visitas del mes actual (correcto, solo para dashboard mes en curso)
       APP.sb.from('visitas_puntos').select('punto_id,fecha,semana_iso').gte('fecha', ini),
       svcIds.length
         ? APP.sb.from('controles_servicio').select('*').in('servicio_id', svcIds)
@@ -47,16 +58,25 @@ async function renderDashboard() {
       svcIds.length
         ? APP.sb.from('personas_registradas').select('tipo_resultado,tipo_delito,grupo_etario').in('servicio_id', svcIds)
         : Promise.resolve({ data: [] }),
-      APP.sb.from('csf_mensual').select('*')
-        .eq('cuartel_id', cuartelId).eq('estado','publicada')
-        .order('fecha_vigencia_inicio',{ascending:false}).limit(1),
-      APP.sb.from('alertas').select('*')
-        .eq('cuartel_id', cuartelId).eq('visto', false)
-        .order('created_at',{ascending:false}).limit(10),
-      APP.sb.from('reportes_inteligencia').select('id')
-        .eq('cuartel_id', cuartelId).eq('estado','pendiente'),
-      APP.sb.from('puntos_territoriales').select('id,tipo,nombre,fvc_base')
-        .eq('cuartel_id', cuartelId).eq('activo',true),
+      // FIX B-CUARTEL: filtrar CSF por cuartel activo
+      (() => {
+        let q = APP.sb.from('csf_mensual').select('*').eq('estado','publicada')
+          .order('fecha_vigencia_inicio',{ascending:false}).limit(1)
+        return cuartelId ? q.eq('cuartel_id', cuartelId) : q
+      })(),
+      (() => {
+        let q = APP.sb.from('alertas').select('*').eq('visto', false)
+          .order('created_at',{ascending:false}).limit(10)
+        return cuartelId ? q.eq('cuartel_id', cuartelId) : q
+      })(),
+      (() => {
+        let q = APP.sb.from('reportes_inteligencia').select('id').eq('estado','pendiente')
+        return cuartelId ? q.eq('cuartel_id', cuartelId) : q
+      })(),
+      (() => {
+        let q = APP.sb.from('puntos_territoriales').select('id,tipo,nombre,fvc_base').eq('activo',true)
+        return cuartelId ? q.eq('cuartel_id', cuartelId) : q
+      })(),
     ])
 
     // KPIs
@@ -117,7 +137,7 @@ async function renderDashboard() {
         <!-- Header -->
         <div class="dash-header">
           <div>
-            <h1 class="dash-titulo">${APP.cuartel?.nombre || 'Dashboard'}</h1>
+            <h1 class="dash-titulo">${cuartelActivo?.nombre || 'Todos los cuarteles'}</h1>
             <p class="dash-sub">Mes en curso · ${MESES_ES[new Date().getMonth()]} ${new Date().getFullYear()}</p>
           </div>
           <div class="dash-fecha">${formatFecha(hoy)}</div>
