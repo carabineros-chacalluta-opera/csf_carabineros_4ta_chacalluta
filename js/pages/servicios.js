@@ -26,36 +26,18 @@ const TOGGLE_BTN_IDS = {
 async function renderServicios() {
   showLoader('pantalla-servicios', 'Cargando servicios...')
 
-  // FIX B-CUARTEL: usar cuartel activo
-  const cuartelActivo = APP.cuartelActivo()
-  const cuartelId     = cuartelActivo?.id
-  if (!cuartelId) {
-    el('pantalla-servicios').innerHTML = '<div class="container"><div class="cargando">Selecciona un cuartel en el selector superior</div></div>'
-    return
-  }
+  const hoy      = hoyISO()
+  const anio     = new Date().getFullYear()
+  const ini      = `${anio}-01-01`
 
-  // FIX B-FECHA: mostrar últimos 90 días en lugar de solo el mes actual
-  const fechaDesde = new Date()
-  fechaDesde.setDate(fechaDesde.getDate() - 90)
-  const desdeFiltro = fechaDesde.toISOString().split('T')[0]
-
-  const { data: servicios } = await APP.sb
-    .from('servicios')
-    .select('*')
-    .eq('cuartel_id', cuartelId)
-    .gte('fecha', desdeFiltro)          // FIX: últimos 90 días, no solo el mes
-    .order('fecha', { ascending: false })
-    .limit(200)                          // FIX: aumentado de 60 a 200
-
-  const pendientes  = (servicios||[]).filter(s => s.estado === 'pendiente')
-  const completados = (servicios||[]).filter(s => s.estado === 'completado')
+  const cuartelActivo  = APP.cuartelActivo()
+  const puedeVerTodos  = APP.esAdministrador() || APP.esComisario()
 
   el('pantalla-servicios').innerHTML = `
     <div class="container">
-      <div class="flex-sb" style="margin-bottom:1.5rem">
+      <div class="flex-sb" style="margin-bottom:1rem">
         <div>
           <h2 class="page-titulo">Servicios</h2>
-          <p class="page-sub">${cuartelActivo?.nombre} · Últimos 90 días</p>
         </div>
         ${APP.esAdministrador() ? `
         <button class="btn btn-primario" onclick="abrirCargaExcel()">
@@ -63,33 +45,42 @@ async function renderServicios() {
         </button>` : ''}
       </div>
 
-      <!-- Pendientes urgentes -->
-      ${pendientes.filter(s => {
-        const dias = Math.ceil((new Date() - new Date(s.fecha+'T12:00:00'))/86400000)
-        return dias > 2
-      }).length > 0 ? `
-      <div class="alertas-panel" style="margin-bottom:1rem">
-        <div class="alertas-titulo">🔴 Servicios con más de 48 hrs pendientes</div>
-        ${pendientes.filter(s => {
-          const dias = Math.ceil((new Date() - new Date(s.fecha+'T12:00:00'))/86400000)
-          return dias > 2
-        }).map(s => `
-          <div class="alerta-item alerta-critica" style="cursor:pointer" onclick="abrirFormServicio('${s.id}')">
-            ${formatFecha(s.fecha)} · ${s.tipo_servicio?.trim()} · ${s.hora_inicio||''}-${s.hora_termino||''}
-            <button class="btn btn-sm btn-rojo" onclick="event.stopPropagation();abrirFormServicio('${s.id}')">Completar urgente</button>
-          </div>`).join('')}
-      </div>` : ''}
-
-      <div class="card" style="padding:0">
-        <div class="tabla-header">
-          <span>Pendientes (${pendientes.length})</span>
-          <span>Completados (${completados.length})</span>
+      <!-- Filtros -->
+      <div class="card filtros-card" style="margin-bottom:1rem">
+        <div class="g3">
+          <div class="campo">
+            <label>Desde</label>
+            <input type="date" id="svc-desde" value="${ini}"/>
+          </div>
+          <div class="campo">
+            <label>Hasta</label>
+            <input type="date" id="svc-hasta" value="${hoy}"/>
+          </div>
+          <div class="campo">
+            <label>Estado</label>
+            <select id="svc-estado">
+              <option value="todos">Todos</option>
+              <option value="pendiente">Pendientes</option>
+              <option value="completado">Completados</option>
+            </select>
+          </div>
+          ${puedeVerTodos ? `
+          <div class="campo">
+            <label>Cuartel</label>
+            <select id="svc-cuartel">
+              <option value="">— Todos los cuarteles —</option>
+              ${(APP.todosCuarteles || []).map(c =>
+                `<option value="${c.id}" ${c.id === cuartelActivo?.id ? 'selected' : ''}>
+                  ${c.nombre.replace(' (F)','')}
+                </option>`
+              ).join('')}
+            </select>
+          </div>` : ''}
         </div>
-        <div class="tabla-servicios">
-          ${(servicios||[]).map(s => filaServicio(s)).join('')}
-          ${!servicios?.length ? '<div class="tabla-empty">Sin servicios cargados este mes</div>' : ''}
-        </div>
+        <button class="btn btn-primario" onclick="consultarServicios()">Consultar</button>
       </div>
+
+      <div id="servicios-lista"><div class="cargando">Selecciona un período y consulta</div></div>
 
       <!-- Modal carga Excel -->
       <div id="modal-excel" class="modal" style="display:none">
@@ -98,8 +89,6 @@ async function renderServicios() {
             <div class="modal-titulo">Cargar Excel de Servicios</div>
             <button onclick="el('modal-excel').style.display='none'" class="btn-cerrar">✕</button>
           </div>
-
-          <!-- Paso 1: Descargar plantilla -->
           <div style="background:var(--verde-cl2,#F0F9F3);border:1px solid var(--verde-mid,#C2DECE);border-radius:var(--r,8px);padding:.9rem 1rem;margin-bottom:1rem">
             <div style="font-size:.76rem;font-weight:700;color:var(--verde-osc,#155C38);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.05em">
               Paso 1 — Descargar plantilla
@@ -111,8 +100,6 @@ async function renderServicios() {
               ↓ Descargar plantilla .xlsx
             </button>
           </div>
-
-          <!-- Paso 2: Subir archivo -->
           <div style="background:var(--surface-2,#F8FAF9);border:1px solid var(--border-light,#DDE8E2);border-radius:var(--r,8px);padding:.9rem 1rem;margin-bottom:1rem">
             <div style="font-size:.76rem;font-weight:700;color:var(--muted,#5A6B62);margin-bottom:.4rem;text-transform:uppercase;letter-spacing:.05em">
               Paso 2 — Subir archivo completado
@@ -122,9 +109,7 @@ async function renderServicios() {
               Solo se importarán filas con tipos de servicio reconocidos por el sistema.
             </p>
           </div>
-
           <div id="excel-resultado" style="font-size:.8rem;margin-bottom:.75rem"></div>
-
           <div style="display:flex;gap:.5rem">
             <button class="btn btn-primario" onclick="procesarExcel()">↑ Importar servicios</button>
             <button class="btn btn-ghost" onclick="el('modal-excel').style.display='none'">Cancelar</button>
@@ -135,6 +120,90 @@ async function renderServicios() {
       <!-- Modal formulario servicio -->
       <div id="modal-servicio" class="modal" style="display:none">
         <div class="modal-box modal-grande" id="form-servicio-contenido"></div>
+      </div>
+    </div>`
+
+  // Cargar automáticamente al entrar
+  await consultarServicios()
+}
+
+async function consultarServicios() {
+  const desde   = el('svc-desde')?.value
+  const hasta   = el('svc-hasta')?.value
+  const estado  = el('svc-estado')?.value || 'todos'
+  const zona    = el('servicios-lista')
+  if (!zona) return
+
+  // Cuartel: leer del selector de servicios si existe, si no usar el activo global
+  const svcCuartelId = el('svc-cuartel')?.value || APP.cuartelActivo()?.id
+  const cuartelId    = svcCuartelId || null
+
+  // Digitador sin cuartel asignado
+  if (!cuartelId && APP.esDigitador()) {
+    zona.innerHTML = '<div class="card" style="text-align:center;padding:2rem;color:var(--muted)">Sin cuartel asignado</div>'
+    return
+  }
+
+  showLoader('servicios-lista', 'Consultando servicios...')
+
+  let query = APP.sb
+    .from('servicios')
+    .select('*')
+    .gte('fecha', desde)
+    .lte('fecha', hasta)
+    .order('fecha', { ascending: false })
+    .limit(500)
+
+  if (cuartelId)             query = query.eq('cuartel_id', cuartelId)
+  if (estado !== 'todos')    query = query.eq('estado', estado)
+
+  const { data: servicios, error } = await query
+
+  if (error) {
+    zona.innerHTML = `<div class="card" style="color:var(--rojo);padding:1rem">Error al consultar: ${error.message}</div>`
+    return
+  }
+
+  if (!servicios?.length) {
+    zona.innerHTML = '<div class="card" style="text-align:center;padding:2rem;color:var(--muted)">Sin servicios en el período seleccionado</div>'
+    return
+  }
+
+  const pendientes  = servicios.filter(s => s.estado === 'pendiente')
+  const completados = servicios.filter(s => s.estado === 'completado')
+
+  // Construir nombre del cuartel seleccionado para mostrar en subtítulo
+  let cuartelNombre = 'Todos los cuarteles'
+  if (cuartelId) {
+    const c = (APP.todosCuarteles||[]).find(c => c.id === cuartelId) || APP.cuartelActivo()
+    cuartelNombre = c?.nombre || cuartelNombre
+  }
+
+  zona.innerHTML = `
+    <!-- Pendientes urgentes -->
+    ${pendientes.filter(s => {
+      const dias = Math.ceil((new Date() - new Date(s.fecha+'T12:00:00'))/86400000)
+      return dias > 2
+    }).length > 0 ? `
+    <div class="alertas-panel" style="margin-bottom:1rem">
+      <div class="alertas-titulo">🔴 Servicios con más de 48 hrs pendientes</div>
+      ${pendientes.filter(s => {
+        const dias = Math.ceil((new Date() - new Date(s.fecha+'T12:00:00'))/86400000)
+        return dias > 2
+      }).map(s => `
+        <div class="alerta-item alerta-critica" style="cursor:pointer" onclick="abrirFormServicio('${s.id}')">
+          ${formatFecha(s.fecha)} · ${s.tipo_servicio?.trim()} · ${s.hora_inicio||''}-${s.hora_termino||''}
+          <button class="btn btn-sm btn-rojo" onclick="event.stopPropagation();abrirFormServicio('${s.id}')">Completar urgente</button>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="card" style="padding:0">
+      <div class="tabla-header">
+        <span>${cuartelNombre} · ${desde} al ${hasta}</span>
+        <span>Pendientes (${pendientes.length}) · Completados (${completados.length})</span>
+      </div>
+      <div class="tabla-servicios">
+        ${servicios.map(s => filaServicio(s)).join('')}
       </div>
     </div>`
 }
