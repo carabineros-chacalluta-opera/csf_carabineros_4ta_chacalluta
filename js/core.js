@@ -12,11 +12,17 @@ const APP = {
   usuario: null,
   perfil: null,
   cuartel: null,
+  todosCuarteles: [],      // FIX B-CUARTEL: lista completa para selector
   _ufCache: {},           // B9: caché { 'YYYY-MM-DD': valorUF }
   esComisario:     () => APP.perfil?.rol === 'comisario',
   esAdministrador: () => APP.perfil?.rol === 'administrador',
   esDigitador:     () => APP.perfil?.rol === 'digitador',
+  // Retorna el cuartel actualmente seleccionado (puede diferir del propio)
+  cuartelActivo:   () => APP._cuartelSeleccionado || APP.cuartel,
 }
+
+// Cuartel seleccionado actualmente en el selector (admin/comisario)
+APP._cuartelSeleccionado = null
 
 // ── INICIALIZACIÓN ────────────────────────────────────────────
 async function iniciarApp() {
@@ -32,6 +38,17 @@ async function cargarPerfil(userId) {
   if (error || !perfil) { mostrarLogin(); return }
   APP.perfil  = perfil
   APP.cuartel = perfil.cuartel
+
+  // FIX B-CUARTEL: admin y comisario pueden ver todos los cuarteles.
+  // Cargar lista completa para el selector de cuartel.
+  if (APP.esAdministrador() || APP.esComisario()) {
+    const { data: todosLosCuarteles } = await APP.sb
+      .from('cuarteles').select('*').eq('activo', true).order('nombre')
+    APP.todosCuarteles = todosLosCuarteles || []
+  } else {
+    APP.todosCuarteles = perfil.cuartel ? [perfil.cuartel] : []
+  }
+
   mostrarApp()
 }
 
@@ -245,8 +262,55 @@ function mostrarApp() {
   el('pantalla-login').style.display = 'none'
   el('app-shell').style.display      = 'grid'
   construirNavegacion()
+  construirSelectorCuartel()   // FIX B-CUARTEL
   mostrarPantalla('dashboard')
   renderDashboard()
+}
+
+// FIX B-CUARTEL: selector de cuartel en topbar para admin/comisario
+function construirSelectorCuartel() {
+  const wrap = el('topbar-cuartel-wrap')
+  if (!wrap) return
+
+  // Digitador: solo ve su cuartel, sin selector
+  if (APP.esDigitador() || APP.todosCuarteles.length <= 1) {
+    wrap.innerHTML = `
+      <span class="topbar-cuartel-label">Unidad:</span>
+      <span id="topbar-cuartel" class="topbar-cuartel-nombre">
+        ${APP.cuartel?.nombre || '—'}
+      </span>`
+    return
+  }
+
+  // Admin/Comisario: selector desplegable con todos los cuarteles
+  wrap.innerHTML = `
+    <span class="topbar-cuartel-label">Unidad:</span>
+    <select id="selector-cuartel" class="topbar-cuartel-select"
+            onchange="cambiarCuartelActivo(this.value)"
+            style="font-size:.8rem;padding:.2rem .4rem;border:1px solid var(--border-light);
+                   border-radius:var(--r-sm);background:var(--surface);color:var(--text);
+                   cursor:pointer;max-width:260px;">
+      <option value="">— Todos los cuarteles —</option>
+      ${APP.todosCuarteles.map(c =>
+        `<option value="${c.id}" ${c.id === APP.cuartel?.id ? 'selected' : ''}>
+          ${c.nombre.replace(' (F)','')}
+        </option>`
+      ).join('')}
+    </select>`
+
+  // Inicializar con el cuartel propio del usuario
+  APP._cuartelSeleccionado = APP.cuartel
+}
+
+async function cambiarCuartelActivo(cuartelId) {
+  if (!cuartelId) {
+    APP._cuartelSeleccionado = null   // null = todos
+  } else {
+    APP._cuartelSeleccionado = APP.todosCuarteles.find(c => c.id === cuartelId) || APP.cuartel
+  }
+  // Recargar la pantalla activa con el nuevo filtro
+  const pantAlerta = document.querySelector('.nav-item.active')?.dataset?.pantalla || 'dashboard'
+  await navegarA(pantAlerta)
 }
 
 function construirNavegacion() {
@@ -297,5 +361,7 @@ function cerrarSesion() {
   APP.perfil  = null
   APP.cuartel = null
   APP._ufCache = {}
+  APP.todosCuarteles = []
+  APP._cuartelSeleccionado = null
   mostrarLogin()
 }
