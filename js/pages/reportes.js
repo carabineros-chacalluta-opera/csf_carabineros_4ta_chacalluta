@@ -5,8 +5,14 @@
 let _filtroRep = { desde: null, hasta: null, tipo_punto: 'todos', cuartel: null }
 
 async function renderReportes() {
-  const hoy = hoyISO()
-  const ini = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}-01`
+  const hoy  = hoyISO()
+  // FIX B-FECHA: por defecto el año completo, no solo el mes actual
+  const anio = new Date().getFullYear()
+  const ini  = `${anio}-01-01`
+
+  // FIX B-CUARTEL: selector de cuartel en reportes
+  const cuartelActivo = APP.cuartelActivo()
+  const puedeVerTodos = APP.esAdministrador() || APP.esComisario()
 
   el('pantalla-reportes').innerHTML = `
     <div class="container">
@@ -32,28 +38,47 @@ async function renderReportes() {
               <option value="sie">Solo SIE</option>
             </select>
           </div>
+          ${puedeVerTodos ? `
+          <div class="campo">
+            <label>Cuartel</label>
+            <select id="rep-cuartel">
+              <option value="">— Todos los cuarteles —</option>
+              ${(APP.todosCuarteles || []).map(c =>
+                `<option value="${c.id}" ${c.id === cuartelActivo?.id ? 'selected' : ''}>
+                  ${c.nombre.replace(' (F)','')}
+                </option>`
+              ).join('')}
+            </select>
+          </div>` : ''}
         </div>
         <button class="btn btn-primario" onclick="cargarReportes()">Consultar</button>
       </div>
 
       <div id="reportes-contenido"><div class="cargando">Selecciona un período y consulta</div></div>
     </div>`
+
+  // FIX B-FECHA: cargar automáticamente al entrar, sin esperar que el usuario haga clic
+  await cargarReportes()
 }
 
 async function cargarReportes() {
-  const desde    = el('rep-desde')?.value
-  const hasta    = el('rep-hasta')?.value
-  const tipoPunto= el('rep-tipo')?.value
-  const zona     = el('reportes-contenido')
+  const desde     = el('rep-desde')?.value
+  const hasta     = el('rep-hasta')?.value
+  const tipoPunto = el('rep-tipo')?.value
+  const zona      = el('reportes-contenido')
+
+  // FIX B-CUARTEL: leer cuartel del selector de reportes o del activo global
+  const repCuartelId = el('rep-cuartel')?.value || APP.cuartelActivo()?.id
+  const cuartelId    = repCuartelId || null
 
   showLoader('reportes-contenido', 'Consultando datos...')
 
-  const cuartelId = APP.cuartel?.id
-
   // Servicios del período
-  const { data: svcs } = await APP.sb.from('servicios')
-    .select('id').eq('cuartel_id', cuartelId)
-    .gte('fecha', desde).lte('fecha', hasta)
+  let svcsQuery = APP.sb.from('servicios')
+    .select('id').gte('fecha', desde).lte('fecha', hasta)
+  if (cuartelId) svcsQuery = svcsQuery.eq('cuartel_id', cuartelId)
+
+  const { data: svcs } = await svcsQuery
   const svcIds = (svcs||[]).map(s=>s.id)
   if (!svcIds.length) {
     zona.innerHTML = '<div class="card" style="text-align:center;padding:2rem;color:var(--muted)">Sin servicios en el período seleccionado</div>'
@@ -74,7 +99,11 @@ async function cargarReportes() {
     APP.sb.from('incautaciones').select('*').in('servicio_id', svcIds),
     APP.sb.from('hallazgos_sin_detenido').select('*').in('servicio_id', svcIds),
     APP.sb.from('controles_servicio').select('*').in('servicio_id', svcIds),
-    APP.sb.from('puntos_territoriales').select('id,nombre,tipo').eq('cuartel_id', cuartelId).eq('activo',true),
+    // FIX B-CUARTEL: filtrar puntos por cuartel si está definido
+    (() => {
+      let q = APP.sb.from('puntos_territoriales').select('id,nombre,tipo').eq('activo',true)
+      return cuartelId ? q.eq('cuartel_id', cuartelId) : q
+    })(),
   ])
 
   // Filtrar visitas por tipo si aplica
