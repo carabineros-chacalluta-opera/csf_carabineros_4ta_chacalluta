@@ -121,7 +121,7 @@ async function renderDashboard() {
     // Detectar puntos con atraso
     const hoy_d = new Date(hoy)
     const umbralDias = {
-      'diario':1,'2x_semana':4,'semanal':8,'quincenal':18,'mensual':35,'bimestral':65
+      'diario':1,'2x_semana':4,'semanal':8,'quincenal':18,'mensual':35,'bimestral':65,'trimestral':100,'semestral':190
     }
     const puntosAtraso = (puntos||[]).map(p => {
       const ult  = ultimaVisitaPorPunto[p.id]
