@@ -1,6 +1,9 @@
 // ============================================================
 // SISTEMA CSF OPERATIVA — csf.js  v1.1
 // CORRECCIONES:
+//   FIX — APP.cuartel → APP.cuartelActivo() en todo el archivo
+//   FIX — Administrador tiene acceso igual que Comisario
+//   FIX — Eliminados elaborado_por/publicado_por del insert
 //   B3 — exportarCSFPDF() real usando window.print() + @media print
 //   B8 — tabs usan data-tab attribute (no textContent.includes)
 //   M3 — botón "Volver a borrador" para corregir CSF publicadas
@@ -69,19 +72,27 @@ async function renderGenerador() {
           </select>
         </div>
       </div>
-      ${APP.esComisario() ? `
+      ${(APP.esComisario() || APP.esAdministrador()) ? `
       <button class="btn btn-primario" onclick="generarBorradorCSF()">
         ⚙ Generar borrador automático
-      </button>` : `<div style="font-size:.8rem;color:var(--muted)">Solo el Comisario puede generar y publicar la CSF.</div>`}
+      </button>` : `<div style="font-size:.8rem;color:var(--muted)">Sin permisos para generar la CSF.</div>`}
     </div>
     <div id="csf-borrador"></div>`
 }
 
 async function generarBorradorCSF() {
   const zona = el('csf-borrador')
+
+  // FIX: verificar cuartel activo antes de proceder
+  const cuartelActivo = APP.cuartelActivo()
+  if (!cuartelActivo?.id) {
+    zona.innerHTML = '<div class="card" style="color:var(--rojo);padding:1rem">⚠ Selecciona un cuartel en el selector antes de generar la CSF.</div>'
+    return
+  }
+
   zona.innerHTML = '<div class="cargando">Calculando criticidad por punto...</div>'
 
-  const cuartelId = APP.cuartel?.id
+  const cuartelId = cuartelActivo.id
   const ref       = mesAnteriorRef()
   const hoy       = new Date()
   const mesVig    = hoy.getDate() <= 5
@@ -212,7 +223,7 @@ function htmlBorrador(d) {
       ${metaCelda('NRO. CSF:',nroCsf)}${metaCelda('CLASIFICACIÓN:',`<strong style="color:#C0392B">${clasif}</strong>`)}${metaCelda('EMISIÓN:',formatFechaCorta(hoyISO()))}
     </div>
     <div style="display:grid;grid-template-columns:auto 1fr auto 1fr;background:#CCE3D3;font-size:.72rem;border-bottom:1px solid #aac">
-      ${metaCelda('SECTOR:',APP.cuartel?.nombre||'')}${metaCelda('VIGENCIA:',`01-${String(mesVig.mes).padStart(2,'0')}-${mesVig.anio} al ${formatFechaCorta(finVig)} (30 días)`)}
+      ${metaCelda('SECTOR:',APP.cuartelActivo()?.nombre||'')}${metaCelda('VIGENCIA:',`01-${String(mesVig.mes).padStart(2,'0')}-${mesVig.anio} al ${formatFechaCorta(finVig)} (30 días)`)}
     </div>
 
     <div style="background:#1A843F;color:#fff;padding:.4rem .85rem;font-size:.74rem;font-weight:700">
@@ -337,7 +348,7 @@ function exportarCSFPDF() {
     <html lang="es">
     <head>
       <meta charset="UTF-8"/>
-      <title>CSF — ${APP.cuartel?.nombre || ''}</title>
+      <title>CSF — ${APP.cuartelActivo()?.nombre || ''}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: Arial, sans-serif; font-size: 12px; color: #000; background: #fff; }
@@ -359,6 +370,13 @@ function exportarCSFPDF() {
 
 async function publicarCSF() {
   if (!_csfDatos) { toast('Genere primero el borrador','err'); return }
+
+  // FIX: verificar que hay cuartel activo seleccionado
+  if (!APP.cuartelActivo()?.id) {
+    toast('Selecciona un cuartel antes de publicar la CSF', 'err')
+    return
+  }
+
   const { puntosProcesados, puntosPorFecha, amenaza, clasif, nroCsf, iniVig, finVig, mesVig, ref, cuartelId } = _csfDatos
   try {
     const { data: csf, error } = await APP.sb.from('csf_mensual').insert({
@@ -374,8 +392,6 @@ async function publicarCSF() {
       fecha_vigencia_fin:    finVig,
       amenaza_principal:     amenaza,
       estado:                'publicada',
-      elaborado_por:         APP.perfil.id,
-      publicado_por:         APP.perfil.id,
       publicado_at:          new Date().toISOString(),
     }).select().single()
     if (error) throw error
@@ -424,7 +440,7 @@ async function publicarCSF() {
 async function renderSeguimiento() {
   const zona = el('csf-contenido')
   const { data: csfs } = await APP.sb.from('csf_mensual')
-    .select('*').eq('cuartel_id', APP.cuartel.id).eq('estado','publicada')
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).eq('estado','publicada')
     .order('fecha_vigencia_inicio',{ascending:false}).limit(1)
 
   if (!csfs?.length) {
@@ -459,7 +475,7 @@ async function renderSeguimiento() {
             <div style="font-size:2rem;font-weight:700;color:${color}">${pctGlobal}%</div>
             <div style="font-size:.7rem;color:var(--muted)">Cumplimiento global</div>
           </div>
-          ${APP.esComisario() ? `
+          ${(APP.esComisario() || APP.esAdministrador()) ? `
           <button class="btn btn-secundario btn-sm" onclick="despublicarCSF('${csf.id}')">
             ↩ Volver a borrador
           </button>` : ''}
@@ -516,7 +532,7 @@ async function despublicarCSF(csfId) {
 async function renderHistorial() {
   const zona = el('csf-contenido')
   const { data: csfs } = await APP.sb.from('csf_mensual')
-    .select('*').eq('cuartel_id', APP.cuartel.id)
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id)
     .order('created_at', { ascending: false }).limit(20)
 
   zona.innerHTML = `
