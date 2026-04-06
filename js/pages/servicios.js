@@ -25,15 +25,27 @@ const TOGGLE_BTN_IDS = {
 // ── LISTA DE SERVICIOS ───────────────────────────────────────
 async function renderServicios() {
   showLoader('pantalla-servicios', 'Cargando servicios...')
-  const cuartelId = APP.cuartel?.id
-  if (!cuartelId) return
+
+  // FIX B-CUARTEL: usar cuartel activo
+  const cuartelActivo = APP.cuartelActivo()
+  const cuartelId     = cuartelActivo?.id
+  if (!cuartelId) {
+    el('pantalla-servicios').innerHTML = '<div class="container"><div class="cargando">Selecciona un cuartel en el selector superior</div></div>'
+    return
+  }
+
+  // FIX B-FECHA: mostrar últimos 90 días en lugar de solo el mes actual
+  const fechaDesde = new Date()
+  fechaDesde.setDate(fechaDesde.getDate() - 90)
+  const desdeFiltro = fechaDesde.toISOString().split('T')[0]
 
   const { data: servicios } = await APP.sb
     .from('servicios')
     .select('*')
     .eq('cuartel_id', cuartelId)
+    .gte('fecha', desdeFiltro)          // FIX: últimos 90 días, no solo el mes
     .order('fecha', { ascending: false })
-    .limit(60)
+    .limit(200)                          // FIX: aumentado de 60 a 200
 
   const pendientes  = (servicios||[]).filter(s => s.estado === 'pendiente')
   const completados = (servicios||[]).filter(s => s.estado === 'completado')
@@ -43,7 +55,7 @@ async function renderServicios() {
       <div class="flex-sb" style="margin-bottom:1.5rem">
         <div>
           <h2 class="page-titulo">Servicios</h2>
-          <p class="page-sub">${APP.cuartel?.nombre}</p>
+          <p class="page-sub">${cuartelActivo?.nombre} · Últimos 90 días</p>
         </div>
         ${APP.esAdministrador() ? `
         <button class="btn btn-primario" onclick="abrirCargaExcel()">
