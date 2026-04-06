@@ -43,27 +43,51 @@ async function cambiarTabCSF(tab) {
 // ── TAB GENERAR ──────────────────────────────────────────────
 async function renderGenerador() {
   const zona = el('csf-contenido')
-  const ref  = mesAnteriorRef()
   const hoy  = new Date()
-  const mesVig = hoy.getDate() <= 5
-    ? { mes: hoy.getMonth() + 1, anio: hoy.getFullYear() }
-    : { mes: hoy.getMonth() + 2 > 12 ? 1 : hoy.getMonth() + 2,
-        anio: hoy.getMonth() + 2 > 12 ? hoy.getFullYear() + 1 : hoy.getFullYear() }
+  const anio = hoy.getFullYear()
+
+  // Opciones de meses para los selectores
+  const opcionesMes = (anioSel) => MESES_ES.map((m, i) =>
+    `<option value="${i+1}">${m} ${anioSel}</option>`
+  ).join('')
+
+  // Años disponibles: año anterior, actual y siguiente
+  const anios = [anio - 1, anio, anio + 1]
+  const opcionesAnio = (idSel) => anios.map(a =>
+    `<option value="${a}" ${a === anio ? 'selected' : ''}>${a}</option>`
+  ).join('')
 
   zona.innerHTML = `
     <div class="card gap3" style="margin-bottom:1rem">
       <div class="sec-titulo">Parámetros de la CSF</div>
       <div class="g3">
+
         <div class="campo">
-          <label>Mes de referencia (datos a analizar)</label>
-          <div style="font-weight:600;color:var(--verde)">${MESES_ES[ref.mes-1]} ${ref.anio}</div>
-          <div style="font-size:.72rem;color:var(--muted)">Calculado automáticamente (mes actual - ${CSF_CONFIG.CSF_DESFASE_MESES})</div>
+          <label>Mes de referencia <span style="font-size:.7rem;color:var(--muted)">(datos a analizar)</span></label>
+          <div style="display:flex;gap:.5rem;align-items:center">
+            <select id="csf-ref-mes" style="flex:1">
+              ${MESES_ES.map((m,i) => `<option value="${i+1}" ${i+1 === hoy.getMonth()-1 || (hoy.getMonth()<=1 && i===10) ? 'selected':''}>${m}</option>`).join('')}
+            </select>
+            <select id="csf-ref-anio" style="width:90px">
+              ${opcionesAnio('ref')}
+            </select>
+          </div>
+          <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">Mes cuyos datos se usarán para calcular criticidad</div>
         </div>
+
         <div class="campo">
-          <label>Vigencia de la CSF</label>
-          <div style="font-weight:600;color:var(--verde)">${MESES_ES[mesVig.mes-1]} ${mesVig.anio}</div>
-          <div style="font-size:.72rem;color:var(--muted)">30 días · Inicio 01-${String(mesVig.mes).padStart(2,'0')}-${mesVig.anio}</div>
+          <label>Mes de vigencia <span style="font-size:.7rem;color:var(--muted)">(mes que rige la CSF)</span></label>
+          <div style="display:flex;gap:.5rem;align-items:center">
+            <select id="csf-vig-mes" style="flex:1">
+              ${MESES_ES.map((m,i) => `<option value="${i+1}" ${i+1 === hoy.getMonth()+1 ? 'selected':''}>${m}</option>`).join('')}
+            </select>
+            <select id="csf-vig-anio" style="width:90px">
+              ${opcionesAnio('vig')}
+            </select>
+          </div>
+          <div style="font-size:.7rem;color:var(--muted);margin-top:.25rem">Mes para el cual regirá esta carta</div>
         </div>
+
         <div class="campo">
           <label>Clasificación</label>
           <select id="csf-clasif">
@@ -71,6 +95,7 @@ async function renderGenerador() {
             <option value="SECRETO">SECRETO</option>
           </select>
         </div>
+
       </div>
       ${(APP.esComisario() || APP.esAdministrador()) ? `
       <button class="btn btn-primario" onclick="generarBorradorCSF()">
@@ -90,15 +115,22 @@ async function generarBorradorCSF() {
     return
   }
 
+  // Leer selectores manuales
+  const refMes  = parseInt(el('csf-ref-mes')?.value)
+  const refAnio = parseInt(el('csf-ref-anio')?.value)
+  const vigMes  = parseInt(el('csf-vig-mes')?.value)
+  const vigAnio = parseInt(el('csf-vig-anio')?.value)
+
+  if (!refMes || !refAnio || !vigMes || !vigAnio) {
+    zona.innerHTML = '<div class="card" style="color:var(--rojo);padding:1rem">⚠ Selecciona el mes de referencia y mes de vigencia antes de generar.</div>'
+    return
+  }
+
   zona.innerHTML = '<div class="cargando">Calculando criticidad por punto...</div>'
 
   const cuartelId = cuartelActivo.id
-  const ref       = mesAnteriorRef()
-  const hoy       = new Date()
-  const mesVig    = hoy.getDate() <= 5
-    ? { mes: hoy.getMonth() + 1, anio: hoy.getFullYear() }
-    : { mes: hoy.getMonth() + 2 > 12 ? 1 : hoy.getMonth() + 2,
-        anio: hoy.getMonth() + 2 > 12 ? hoy.getFullYear() + 1 : hoy.getFullYear() }
+  const ref       = { mes: refMes, anio: refAnio }
+  const mesVig    = { mes: vigMes, anio: vigAnio }
 
   const iniRef = `${ref.anio}-${String(ref.mes).padStart(2,'0')}-01`
   const finRef = new Date(ref.anio, ref.mes, 0).toISOString().split('T')[0]
