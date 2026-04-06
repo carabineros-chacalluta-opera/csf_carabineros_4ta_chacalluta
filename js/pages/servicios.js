@@ -8,6 +8,7 @@
 //   M2  — guardarServicio() valida al menos 1 punto en S1
 //   M4  — advertencia al reabrir servicio ya completado
 //   M5  — indicador de progreso al guardar (pasos visibles)
+//   FIX — APP.cuartel.id → APP.cuartelActivo()?.id (admin global)
 // ============================================================
 
 let _servicioActual      = null
@@ -317,7 +318,7 @@ async function procesarExcel() {
 
     // B6: el upsert funciona con el UNIQUE constraint agregado en schema
     const { error } = await APP.sb.from('servicios').upsert({
-      cuartel_id:            APP.cuartel.id,
+      cuartel_id:            APP.cuartelActivo()?.id,
       fecha,
       tipo_servicio:         tipo,
       hora_inicio:           hIni || null,
@@ -347,12 +348,20 @@ async function procesarExcel() {
 // ── FORMULARIO COMPLETAR SERVICIO ────────────────────────────
 async function abrirFormServicio(servicioId) {
   if (APP.esComisario()) return
+
+  // FIX: admin global necesita tener un cuartel activo seleccionado en el topbar
+  const cuartelActivo = APP.cuartelActivo()
+  if (!cuartelActivo) {
+    toast('Selecciona un cuartel en el selector antes de abrir un servicio', 'err')
+    return
+  }
+
   showLoader('form-servicio-contenido', 'Cargando servicio...')
   el('modal-servicio').style.display = 'flex'
 
   const { data: svc }    = await APP.sb.from('servicios').select('*').eq('id', servicioId).single()
   const { data: puntos } = await APP.sb.from('puntos_territoriales')
-    .select('*').eq('cuartel_id', APP.cuartel.id).eq('activo', true).order('tipo').order('nombre')
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).eq('activo', true).order('tipo').order('nombre')
 
   _servicioActual      = svc
   _puntosDelCuartel    = puntos || []
@@ -574,7 +583,7 @@ async function validarCodigo(codigo) {
   if (!codigo || !est) return
   const { data } = await APP.sb.from('personal_cuartel')
     .select('id').eq('codigo_funcionario', codigo)
-    .eq('cuartel_id', APP.cuartel.id).eq('activo', true).single()
+    .eq('cuartel_id', APP.cuartelActivo()?.id).eq('activo', true).single()
   est.textContent = data ? '✅ Código válido' : '⚠️ Código no reconocido'
   est.style.color = data ? 'var(--verde)' : 'var(--amarillo)'
 }
@@ -1089,7 +1098,7 @@ async function guardarServicio() {
       if (nivel === 'alto' && obsRec) {
         await APP.sb.from('reportes_inteligencia').insert({
           observacion_id: obsRec.id,
-          cuartel_id:     APP.cuartel.id,
+          cuartel_id:     APP.cuartelActivo()?.id,
           fecha_generado: fecha,
           estado:         'pendiente',
         })
@@ -1184,13 +1193,13 @@ async function guardarServicio() {
       })
 
       if (esCohecho) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartel.id, tipo: 'cohecho',
+        cuartel_id: APP.cuartelActivo()?.id, tipo: 'cohecho',
         detalle: `Cohecho detectado en servicio ${fecha}`, servicio_id: svcId })
       if (esNNA) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartel.id, tipo: 'nna',
+        cuartel_id: APP.cuartelActivo()?.id, tipo: 'nna',
         detalle: `NNA en situación irregular detectado - ${fecha}`, servicio_id: svcId })
       if (esInterpol) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartel.id, tipo: 'interpol',
+        cuartel_id: APP.cuartelActivo()?.id, tipo: 'interpol',
         detalle: `Objetivo internacional capturado - ${fecha}`, servicio_id: svcId })
     }
 
