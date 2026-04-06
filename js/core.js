@@ -230,7 +230,29 @@ function generarCalendarioVisitas(punto, csf, fvcAsignada, turno, horaInicio, ho
       cursor.setDate(cursor.getDate() + 15)
       quincena++
     }
+  } else if (fvc === 'mensual') {
+    // 1 visita al mes: día 15 del período
+    const v = new Date(inicio)
+    v.setDate(15)
+    if (v < inicio) v.setMonth(v.getMonth() + 1)
+    if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
+  } else if (fvc === 'bimestral') {
+    // 1 visita cada 2 meses: día 15 del mes de inicio de vigencia
+    const v = new Date(inicio)
+    v.setDate(15)
+    if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
+  } else if (fvc === 'trimestral') {
+    // 1 visita cada 3 meses: día 15 del mes de inicio de vigencia
+    const v = new Date(inicio)
+    v.setDate(15)
+    if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
+  } else if (fvc === 'semestral') {
+    // 1 visita cada 6 meses: día 15 del mes de inicio de vigencia
+    const v = new Date(inicio)
+    v.setDate(15)
+    if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
   } else {
+    // fallback: 1 visita en el centro del período
     const v = new Date(inicio)
     v.setDate(Math.floor((inicio.getDate() + fin.getDate()) / 2))
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
