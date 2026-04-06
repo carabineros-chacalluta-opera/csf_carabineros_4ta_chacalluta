@@ -6,14 +6,14 @@
 const CSF_CONFIG = {
 
   // ── SUPABASE (reemplazar con tus credenciales) ────────────
-  SUPABASE_URL:      'https://kcsqvhhqninmrttfhirm.supabase.co',
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imtjc3F2aGhxbmlubXJ0dGZoaXJtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1MDA1NzgsImV4cCI6MjA5MTA3NjU3OH0.zXGDSVqHDnFuCWj18SE6_qCLEVYl1zs0oHTASMIrsi4',
+  SUPABASE_URL:      'https://vernoovotmyfmngkmqkk.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZlcm5vb3ZvdG15Zm1uZ2ttcWtrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NDMzNTAsImV4cCI6MjA5MDAxOTM1MH0.Bc-3exE4rK4ZeMJrW3kbFGTeMZsHI7sdON2J5cRcVyw',
 
   // ── SISTEMA ──────────────────────────────────────────────
   NOMBRE_SISTEMA:     'CSF OPERATIVA',
   NOMBRE_UNIDAD:      'Prefectura Arica Nro. 1',
   NOMBRE_INSTITUCION: 'Carabineros de Chile',
-  VERSION:            '1.0.0',
+  VERSION:            '1.1.0',
 
   // ── ROLES ────────────────────────────────────────────────
   ROLES: {
@@ -28,7 +28,7 @@ const CSF_CONFIG = {
   CSF_DIAS_GENERACION:  5,   // publicar antes del día 5 del mes
 
   // ── FVC — FRECUENCIAS ────────────────────────────────────
-  FVC_ORDEN: ['diario','2x_semana','semanal','quincenal','mensual','bimestral'],
+  FVC_ORDEN: ['diario','2x_semana','semanal','quincenal','mensual','bimestral','trimestral','semestral'],
   FVC_LABELS: {
     'diario':      'Diario',
     '2x_semana':   '2 veces / semana',
@@ -36,6 +36,8 @@ const CSF_CONFIG = {
     'quincenal':   '1 vez / 15 días',
     'mensual':     '1 vez / mes',
     'bimestral':   '1 vez / 2 meses',
+    'trimestral':  '1 vez / 3 meses',
+    'semestral':   '1 vez / 6 meses',
   },
   FVC_VISITAS_MES: {
     'diario':      30,
@@ -44,6 +46,8 @@ const CSF_CONFIG = {
     'quincenal':   2,
     'mensual':     1,
     'bimestral':   1,
+    'trimestral':  1,
+    'semestral':   1,
   },
 
   // ── CRITICIDAD P×C ───────────────────────────────────────
