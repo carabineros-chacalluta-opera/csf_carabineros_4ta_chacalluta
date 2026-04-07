@@ -122,6 +122,11 @@ async function renderServicios() {
       <div id="modal-servicio" class="modal" style="display:none">
         <div class="modal-box modal-grande" id="form-servicio-contenido"></div>
       </div>
+
+      <!-- Modal editar servicio -->
+      <div id="modal-editar-servicio" class="modal" style="display:none">
+        <div class="modal-box" id="form-editar-servicio-contenido"></div>
+      </div>
     </div>`
 
   // Cargar automáticamente al entrar
@@ -212,6 +217,7 @@ async function consultarServicios() {
 function filaServicio(s) {
   const dias    = Math.ceil((new Date() - new Date(s.fecha+'T12:00:00'))/86400000)
   const urgente = s.estado === 'pendiente' && dias > 2
+  const puedeEditar = APP.esAdministrador() || APP.esDigitador()
   return `
     <div class="fila-servicio fila-${s.estado} ${urgente?'fila-urgente':''}"
          onclick="abrirFormServicio('${s.id}')">
@@ -221,10 +227,150 @@ function filaServicio(s) {
       <div class="fila-estado">
         <span class="badge badge-${s.estado}">${s.estado === 'pendiente' ? 'Pendiente' : 'Completado'}</span>
       </div>
-      ${s.estado === 'pendiente'
-        ? `<button class="btn btn-sm btn-completar" onclick="event.stopPropagation();abrirFormServicio('${s.id}')">Completar →</button>`
-        : '<span class="fila-check">✓</span>'}
+      <div style="display:flex;gap:.35rem;align-items:center" onclick="event.stopPropagation()">
+        ${s.estado === 'pendiente'
+          ? `<button class="btn btn-sm btn-completar" onclick="abrirFormServicio('${s.id}')">Completar →</button>`
+          : '<span class="fila-check">✓</span>'}
+        ${puedeEditar ? `
+          <button class="btn btn-sm btn-secundario" title="Editar servicio"
+                  onclick="abrirEditarServicio('${s.id}')">✎</button>
+          <button class="btn btn-sm" title="Eliminar servicio"
+                  style="background:#fdecea;color:#C0392B;border:1px solid #f5c6c6"
+                  onclick="confirmarEliminarServicio('${s.id}','${formatFecha(s.fecha).replace(/'/g,'')}')">✕</button>
+        ` : ''}
+      </div>
     </div>`
+}
+
+// ── EDITAR SERVICIO ──────────────────────────────────────────
+async function abrirEditarServicio(servicioId) {
+  const { data: svc } = await APP.sb.from('servicios').select('*').eq('id', servicioId).single()
+  if (!svc) { toast('No se pudo cargar el servicio', 'err'); return }
+
+  el('form-editar-servicio-contenido').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:1.25rem">
+      <div class="modal-titulo">Editar servicio</div>
+      <button onclick="el('modal-editar-servicio').style.display='none'" class="btn-cerrar">✕</button>
+    </div>
+
+    <input type="hidden" id="edit-svc-id" value="${svc.id}"/>
+
+    <div class="g2" style="margin-bottom:1rem">
+      <div class="campo">
+        <label>Fecha</label>
+        <input type="date" id="edit-svc-fecha" value="${svc.fecha}"/>
+      </div>
+      <div class="campo">
+        <label>Tipo de servicio</label>
+        <select id="edit-svc-tipo">
+          ${CSF_CONFIG.SERVICIOS_CSF.map(t =>
+            `<option value="${t}" ${svc.tipo_servicio?.trim()===t?'selected':''}>${t}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="campo">
+        <label>Hora inicio</label>
+        <input type="time" id="edit-svc-hini" value="${svc.hora_inicio||'08:00'}"/>
+      </div>
+      <div class="campo">
+        <label>Hora término</label>
+        <input type="time" id="edit-svc-hfin" value="${svc.hora_termino||'20:00'}"/>
+      </div>
+      <div class="campo">
+        <label>Turno</label>
+        <select id="edit-svc-turno">
+          <option value="diurno"   ${svc.turno==='diurno'  ?'selected':''}>Diurno</option>
+          <option value="nocturno" ${svc.turno==='nocturno'?'selected':''}>Nocturno</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label>Estado</label>
+        <select id="edit-svc-estado">
+          <option value="pendiente"  ${svc.estado==='pendiente' ?'selected':''}>Pendiente</option>
+          <option value="completado" ${svc.estado==='completado'?'selected':''}>Completado</option>
+        </select>
+      </div>
+      <div class="campo">
+        <label>Cantidad funcionarios</label>
+        <input type="number" id="edit-svc-func" min="0" value="${svc.cantidad_funcionarios||0}"/>
+      </div>
+      <div class="campo">
+        <label>Cantidad vehículos</label>
+        <input type="number" id="edit-svc-veh" min="0" value="${svc.cantidad_vehiculos||0}"/>
+      </div>
+    </div>
+
+    <div class="campo" style="margin-bottom:1rem">
+      <label>Observaciones</label>
+      <textarea id="edit-svc-obs" rows="2" style="width:100%">${svc.observaciones||''}</textarea>
+    </div>
+
+    <div style="display:flex;gap:.75rem">
+      <button class="btn btn-primario" onclick="guardarEdicionServicio()">✓ Guardar cambios</button>
+      <button class="btn btn-secundario" onclick="el('modal-editar-servicio').style.display='none'">Cancelar</button>
+    </div>`
+
+  el('modal-editar-servicio').style.display = 'flex'
+}
+
+async function guardarEdicionServicio() {
+  const id = el('edit-svc-id')?.value
+  if (!id) return
+
+  const datos = {
+    fecha:                 el('edit-svc-fecha')?.value,
+    tipo_servicio:         el('edit-svc-tipo')?.value,
+    hora_inicio:           el('edit-svc-hini')?.value || null,
+    hora_termino:          el('edit-svc-hfin')?.value || null,
+    turno:                 el('edit-svc-turno')?.value,
+    estado:                el('edit-svc-estado')?.value,
+    cantidad_funcionarios: parseInt(el('edit-svc-func')?.value) || 0,
+    cantidad_vehiculos:    parseInt(el('edit-svc-veh')?.value)  || 0,
+    observaciones:         el('edit-svc-obs')?.value?.trim() || null,
+    updated_at:            new Date().toISOString(),
+  }
+
+  if (!datos.fecha) { toast('La fecha es obligatoria', 'err'); return }
+
+  const { error } = await APP.sb.from('servicios').update(datos).eq('id', id)
+  if (error) { toast('Error al guardar: ' + error.message, 'err'); return }
+
+  toast('Servicio actualizado correctamente', 'ok')
+  el('modal-editar-servicio').style.display = 'none'
+  await consultarServicios()
+}
+
+// ── ELIMINAR SERVICIO ─────────────────────────────────────────
+function confirmarEliminarServicio(servicioId, descripcion) {
+  if (!confirm(`¿Eliminar este servicio?\n\n${descripcion}\n\nSe eliminarán en cascada todos sus datos:\nvisitas, controles, personas, incautaciones, observaciones y alertas.\n\nEsta acción no se puede deshacer.`)) return
+  eliminarServicio(servicioId)
+}
+
+async function eliminarServicio(servicioId) {
+  try {
+    // Eliminar en cascada los datos asociados
+    await Promise.all([
+      APP.sb.from('visitas_puntos').delete().eq('servicio_id', servicioId),
+      APP.sb.from('controles_servicio').delete().eq('servicio_id', servicioId),
+      APP.sb.from('personas_registradas').delete().eq('servicio_id', servicioId),
+      APP.sb.from('incautaciones').delete().eq('servicio_id', servicioId),
+      APP.sb.from('hallazgos_sin_detenido').delete().eq('servicio_id', servicioId),
+      APP.sb.from('observaciones_intel').delete().eq('servicio_id', servicioId),
+      APP.sb.from('alertas').delete().eq('servicio_id', servicioId),
+    ])
+
+    // Eliminar reportes_inteligencia (referencia indirecta via observaciones)
+    // Ya fueron eliminados con observaciones_intel en cascada según schema
+
+    const { error } = await APP.sb.from('servicios').delete().eq('id', servicioId)
+    if (error) throw error
+
+    toast('Servicio eliminado correctamente', 'ok')
+    await consultarServicios()
+  } catch(e) {
+    toast('Error al eliminar: ' + e.message, 'err')
+    console.error('eliminarServicio error:', e)
+  }
 }
 
 // ── CARGA EXCEL ──────────────────────────────────────────────
@@ -349,19 +495,22 @@ async function procesarExcel() {
 async function abrirFormServicio(servicioId) {
   if (APP.esComisario()) return
 
-  // FIX: admin global necesita tener un cuartel activo seleccionado en el topbar
-  const cuartelActivo = APP.cuartelActivo()
-  if (!cuartelActivo) {
-    toast('Selecciona un cuartel en el selector antes de abrir un servicio', 'err')
-    return
-  }
-
   showLoader('form-servicio-contenido', 'Cargando servicio...')
   el('modal-servicio').style.display = 'flex'
 
-  const { data: svc }    = await APP.sb.from('servicios').select('*').eq('id', servicioId).single()
+  // FIX: cargar servicio primero y usar su cuartel_id real
+  // No depender del selector del topbar — el cuartel viene del servicio mismo
+  const { data: svc } = await APP.sb.from('servicios').select('*').eq('id', servicioId).single()
+  if (!svc) {
+    toast('No se pudo cargar el servicio', 'err')
+    el('modal-servicio').style.display = 'none'
+    return
+  }
+
+  const cuartelId = svc.cuartel_id
+
   const { data: puntos } = await APP.sb.from('puntos_territoriales')
-    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).eq('activo', true).order('tipo').order('nombre')
+    .select('*').eq('cuartel_id', cuartelId).eq('activo', true).order('tipo').order('nombre')
 
   _servicioActual      = svc
   _puntosDelCuartel    = puntos || []
@@ -581,9 +730,10 @@ function toggleSeccion(nombre, mostrar) {
 async function validarCodigo(codigo) {
   const est = el('codigo-estado')
   if (!codigo || !est) return
+  const cuartelIdActual = _servicioActual?.cuartel_id || APP.cuartelActivo()?.id
   const { data } = await APP.sb.from('personal_cuartel')
     .select('id').eq('codigo_funcionario', codigo)
-    .eq('cuartel_id', APP.cuartelActivo()?.id).eq('activo', true).single()
+    .eq('cuartel_id', cuartelIdActual).eq('activo', true).single()
   est.textContent = data ? '✅ Código válido' : '⚠️ Código no reconocido'
   est.style.color = data ? 'var(--verde)' : 'var(--amarillo)'
 }
@@ -1098,7 +1248,7 @@ async function guardarServicio() {
       if (nivel === 'alto' && obsRec) {
         await APP.sb.from('reportes_inteligencia').insert({
           observacion_id: obsRec.id,
-          cuartel_id:     APP.cuartelActivo()?.id,
+          cuartel_id:     _servicioActual.cuartel_id,
           fecha_generado: fecha,
           estado:         'pendiente',
         })
@@ -1193,13 +1343,13 @@ async function guardarServicio() {
       })
 
       if (esCohecho) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartelActivo()?.id, tipo: 'cohecho',
+        cuartel_id: _servicioActual.cuartel_id, tipo: 'cohecho',
         detalle: `Cohecho detectado en servicio ${fecha}`, servicio_id: svcId })
       if (esNNA) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartelActivo()?.id, tipo: 'nna',
+        cuartel_id: _servicioActual.cuartel_id, tipo: 'nna',
         detalle: `NNA en situación irregular detectado - ${fecha}`, servicio_id: svcId })
       if (esInterpol) await APP.sb.from('alertas').insert({
-        cuartel_id: APP.cuartelActivo()?.id, tipo: 'interpol',
+        cuartel_id: _servicioActual.cuartel_id, tipo: 'interpol',
         detalle: `Objetivo internacional capturado - ${fecha}`, servicio_id: svcId })
     }
 
