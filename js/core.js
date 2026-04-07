@@ -284,7 +284,103 @@ function mostrarApp() {
   el('pantalla-login').style.display = 'none'
   el('app-shell').style.display      = 'grid'
   construirNavegacion()
-  construirSelectorCuartel()   // FIX B-CUARTEL
+  construirSelectorCuartel()
+
+  // Si el usuario tiene cuartel_id NULL (admin global), preguntar con qué cuartel trabajará
+  if (!APP.cuartel && (APP.esAdministrador() || APP.esComisario()) && APP.todosCuarteles.length > 0) {
+    mostrarModalSeleccionCuartel()
+  } else {
+    mostrarPantalla('dashboard')
+    renderDashboard()
+  }
+}
+
+// ── MODAL SELECCIÓN DE CUARTEL AL INICIO DE SESIÓN ───────────
+function mostrarModalSeleccionCuartel() {
+  // Crear modal si no existe
+  let modal = el('modal-seleccion-cuartel')
+  if (!modal) {
+    modal = document.createElement('div')
+    modal.id = 'modal-seleccion-cuartel'
+    modal.style.cssText = `
+      position:fixed;inset:0;z-index:9999;
+      background:rgba(0,0,0,.55);
+      display:flex;align-items:center;justify-content:center;
+      padding:1rem;`
+    document.body.appendChild(modal)
+  }
+
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:12px;padding:2rem;max-width:420px;width:100%;
+                box-shadow:0 8px 32px rgba(0,0,0,.25);">
+      <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem">
+        <div style="background:#04742C;border-radius:8px;width:36px;height:36px;display:flex;
+                    align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0">🏔</div>
+        <div>
+          <div style="font-weight:700;font-size:1rem;color:#1a1a1a">¿En qué cuartel vas a trabajar?</div>
+          <div style="font-size:.75rem;color:#666;margin-top:.1rem">Esta selección se mantendrá durante tu sesión</div>
+        </div>
+      </div>
+
+      <select id="modal-cuartel-select"
+              style="width:100%;padding:.65rem .85rem;border:1.5px solid #ddd;border-radius:8px;
+                     font-size:.9rem;color:#1a1a1a;background:#fff;cursor:pointer;
+                     margin-bottom:1rem;outline:none;appearance:none;">
+        <option value="">— Selecciona un cuartel —</option>
+        ${APP.todosCuarteles.map(c =>
+          `<option value="${c.id}">${c.nombre.replace(' (F)', '')}</option>`
+        ).join('')}
+      </select>
+
+      <div style="display:flex;gap:.75rem">
+        <button onclick="confirmarCuartelInicio()"
+                style="flex:1;padding:.7rem;background:#04742C;color:#fff;border:none;
+                       border-radius:8px;font-size:.9rem;font-weight:600;cursor:pointer;">
+          Confirmar y entrar
+        </button>
+        <button onclick="confirmarCuartelInicio(true)"
+                style="padding:.7rem 1rem;background:#f0f0f0;color:#666;border:none;
+                       border-radius:8px;font-size:.85rem;cursor:pointer;">
+          Ver todos
+        </button>
+      </div>
+      <div style="font-size:.72rem;color:#999;text-align:center;margin-top:.75rem">
+        Puedes cambiarlo en cualquier momento desde el selector superior
+      </div>
+    </div>`
+
+  modal.style.display = 'flex'
+
+  // Foco en el select para teclado
+  setTimeout(() => el('modal-cuartel-select')?.focus(), 100)
+}
+
+function confirmarCuartelInicio(verTodos = false) {
+  const modal = el('modal-seleccion-cuartel')
+
+  if (!verTodos) {
+    const cuartelId = el('modal-cuartel-select')?.value
+    if (!cuartelId) {
+      // Resaltar que debe seleccionar
+      const sel = el('modal-cuartel-select')
+      if (sel) { sel.style.borderColor = '#C0392B'; sel.focus() }
+      return
+    }
+    const cuartel = APP.todosCuarteles.find(c => c.id === cuartelId)
+    if (cuartel) {
+      APP._cuartelSeleccionado = cuartel
+      // Sincronizar selector del topbar
+      const topbarSel = el('selector-cuartel')
+      if (topbarSel) topbarSel.value = cuartelId
+    }
+  } else {
+    // Ver todos: sin cuartel seleccionado
+    APP._cuartelSeleccionado = null
+    const topbarSel = el('selector-cuartel')
+    if (topbarSel) topbarSel.value = ''
+  }
+
+  if (modal) modal.style.display = 'none'
   mostrarPantalla('dashboard')
   renderDashboard()
 }
@@ -314,23 +410,22 @@ function construirSelectorCuartel() {
                    cursor:pointer;max-width:260px;">
       <option value="">— Todos los cuarteles —</option>
       ${APP.todosCuarteles.map(c =>
-        `<option value="${c.id}" ${c.id === APP.cuartel?.id ? 'selected' : ''}>
+        `<option value="${c.id}" ${c.id === APP._cuartelSeleccionado?.id ? 'selected' : ''}>
           ${c.nombre.replace(' (F)','')}
         </option>`
       ).join('')}
     </select>`
 
-  // Inicializar con el cuartel propio del usuario
-  APP._cuartelSeleccionado = APP.cuartel
+  // Inicializar con el cuartel propio del usuario (si tiene uno fijo)
+  if (APP.cuartel) APP._cuartelSeleccionado = APP.cuartel
 }
 
 async function cambiarCuartelActivo(cuartelId) {
   if (!cuartelId) {
-    APP._cuartelSeleccionado = null   // null = todos
+    APP._cuartelSeleccionado = null
   } else {
     APP._cuartelSeleccionado = APP.todosCuarteles.find(c => c.id === cuartelId) || APP.cuartel
   }
-  // Recargar la pantalla activa con el nuevo filtro
   const pantAlerta = document.querySelector('.nav-item.active')?.dataset?.pantalla || 'dashboard'
   await navegarA(pantAlerta)
 }
