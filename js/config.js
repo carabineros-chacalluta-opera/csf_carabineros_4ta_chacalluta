@@ -1,6 +1,8 @@
 // ============================================================
-// SISTEMA CSF OPERATIVA — config.js
+// SISTEMA CSF OPERATIVA — config.js  v1.2
 // Prefectura Arica Nro. 1 · Carabineros de Chile
+// ACTUALIZACIÓN: Mapeos BS Datos (ley, destino, clasificación,
+//                rango hora) integrados como constantes globales
 // ============================================================
 
 const CSF_CONFIG = {
@@ -13,7 +15,7 @@ const CSF_CONFIG = {
   NOMBRE_SISTEMA:     'CSF OPERATIVA',
   NOMBRE_UNIDAD:      'Prefectura Arica Nro. 1',
   NOMBRE_INSTITUCION: 'Carabineros de Chile',
-  VERSION:            '1.1.0',
+  VERSION:            '1.2.0',
 
   // ── ROLES ────────────────────────────────────────────────
   ROLES: {
@@ -24,8 +26,8 @@ const CSF_CONFIG = {
 
   // ── CSF ───────────────────────────────────────────────────
   CSF_VIGENCIA_DIAS:    30,
-  CSF_DESFASE_MESES:    2,   // datos de mes X → CSF mes X+2
-  CSF_DIAS_GENERACION:  5,   // publicar antes del día 5 del mes
+  CSF_DESFASE_MESES:    2,
+  CSF_DIAS_GENERACION:  5,
 
   // ── FVC — FRECUENCIAS ────────────────────────────────────
   FVC_ORDEN: ['diario','2x_semana','semanal','quincenal','mensual','bimestral','trimestral','semestral'],
@@ -70,12 +72,10 @@ const CSF_CONFIG = {
 
   // ── PLANILLA EXCEL DELITOS CT ────────────────────────────
   ESCALAS_DELITOS: {
-    // Por número de casos
     casos: [
       { max:1, nivel:1 }, { max:2, nivel:2 }, { max:3, nivel:3 },
       { max:4, nivel:4 }, { max:Infinity, nivel:5 }
     ],
-    // Por número de personas
     personas: [
       { max:3, nivel:1 }, { max:8, nivel:2 }, { max:13, nivel:3 },
       { max:19, nivel:4 }, { max:Infinity, nivel:5 }
@@ -89,19 +89,19 @@ const CSF_CONFIG = {
   // ── IDFI PESOS ────────────────────────────────────────────
   IDFI_PESOS: { dfp: 0.40, dfo: 0.60 },
   DFP_PESOS: {
-    dfp01: 0.25,  // Hitos
-    dfp02: 0.30,  // PNH
-    dfp03: 0.15,  // SIE
-    dfp04: 0.15,  // Coordinación internacional
-    dfp05: 0.15,  // Producción inteligencia
+    dfp01: 0.25,
+    dfp02: 0.30,
+    dfp03: 0.15,
+    dfp04: 0.15,
+    dfp05: 0.15,
   },
   DFO_PESOS: {
-    dfo01: 0.15,  // Eficacia controles
-    dfo02: 0.10,  // Docs falsificados
-    dfo03: 0.15,  // Control migratorio
-    dfo04: 0.30,  // Interdicción COT
-    dfo05: 0.15,  // Impacto económico UF
-    dfo06: 0.15,  // Objetivos internacionales
+    dfo01: 0.15,
+    dfo02: 0.10,
+    dfo03: 0.15,
+    dfo04: 0.30,
+    dfo05: 0.15,
+    dfo06: 0.15,
   },
 
   // ── UMBRALES IDFI ─────────────────────────────────────────
@@ -149,4 +149,48 @@ const CSF_CONFIG = {
 
   // ── ALERTAS ───────────────────────────────────────────────
   HORAS_ALERTA_PENDIENTE: 48,
-};
+}
+
+// ── BS DATOS: mapeo delito → ley aplicable (campo 2) ─────────
+const LEY_POR_DELITO = {
+  trafico_drogas:           'Ley 20.000',
+  trafico_migrantes:        'Ley 21.325 (Migración)',
+  trata_personas:           'Ley 20.507',
+  contrabando:              'Ordenanza de Aduanas',
+  ley_17798_armas:          'Ley 17.798 (Control Armas)',
+  abigeato:                 'Código Penal Art. 448',
+  falsificacion_documentos: 'Código Penal Art. 193',
+  receptacion:              'Código Penal Art. 456 bis A',
+  lavado_activos:           'Ley 19.913',
+  cohecho:                  'Código Penal Art. 248',
+  orden_judicial:           'Código Procesal Penal',
+  orden_interpol:           'Interpol / CPP Art. 127',
+  transito:                 'Ley 18.290 (Tránsito)',
+  infraccion_migratoria:    'Ley 21.325 (Migración)',
+  otro:                     'Código Penal',
+}
+
+// ── BS DATOS: destino automático (campo 6) ───────────────────
+const DESTINO_POR_RESULTADO = {
+  detencion:             'parte_fiscalia',
+  infraccion_migratoria: 'oficio_pdi',
+  nna_irregular:         'oficio_pdi',
+}
+
+// ── BS DATOS: clasificación del caso (campo 23) ──────────────
+const CLASIFICACION_POR_RESULTADO = {
+  detencion:             'detenido',
+  infraccion_migratoria: 'infraccion',
+  nna_irregular:         'infraccion',
+}
+
+// ── BS DATOS: cálculo de rango horario (campo 25) ────────────
+function calcularRangoHora(horaStr) {
+  if (!horaStr) return ''
+  const h = parseInt(String(horaStr).split(':')[0])
+  if (isNaN(h))  return ''
+  if (h <  6)  return '00:00 – 05:59'
+  if (h < 12)  return '06:00 – 11:59'
+  if (h < 18)  return '12:00 – 17:59'
+  return '18:00 – 23:59'
+}
