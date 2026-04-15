@@ -1,10 +1,9 @@
 // ============================================================
-// SISTEMA CSF OPERATIVA — core.js  v1.1
-// Funciones base, helpers y estado global
-// CORRECCIONES:
-//   B5 — mesAnteriorRef() edge case enero/febrero corregido
-//   B7 — semanaISO() implementación ISO 8601 correcta
-//   B9 — caché de valor UF (evita llamadas repetidas a la API)
+// SISTEMA CSF OPERATIVA — core.js  v1.3
+// CORRECCIONES v1.3:
+//   FIX-S1 — Sesión persistente: persistSession + autoRefreshToken
+//   FIX-S2 — Cuartel seleccionado persiste en localStorage
+//             (no vuelve a preguntar mientras la sesión esté activa)
 // ============================================================
 
 const APP = {
@@ -12,21 +11,65 @@ const APP = {
   usuario: null,
   perfil: null,
   cuartel: null,
-  todosCuarteles: [],      // FIX B-CUARTEL: lista completa para selector
-  _ufCache: {},           // B9: caché { 'YYYY-MM-DD': valorUF }
+  todosCuarteles: [],
+  _ufCache: {},
   esComisario:     () => APP.perfil?.rol === 'comisario',
   esAdministrador: () => APP.perfil?.rol === 'administrador',
   esDigitador:     () => APP.perfil?.rol === 'digitador',
-  // Retorna el cuartel actualmente seleccionado (puede diferir del propio)
   cuartelActivo:   () => APP._cuartelSeleccionado || APP.cuartel,
 }
 
-// Cuartel seleccionado actualmente en el selector (admin/comisario)
 APP._cuartelSeleccionado = null
+
+// ── FIX-S2: claves localStorage ──────────────────────────────
+const LS_CUARTEL_ID  = 'csf_cuartel_id'
+const LS_CUARTEL_OBJ = 'csf_cuartel_obj'
+
+function guardarCuartelLS(cuartel) {
+  if (!cuartel) {
+    localStorage.removeItem(LS_CUARTEL_ID)
+    localStorage.removeItem(LS_CUARTEL_OBJ)
+  } else {
+    localStorage.setItem(LS_CUARTEL_ID,  cuartel.id)
+    localStorage.setItem(LS_CUARTEL_OBJ, JSON.stringify(cuartel))
+  }
+}
+
+function recuperarCuartelLS() {
+  try {
+    const raw = localStorage.getItem(LS_CUARTEL_OBJ)
+    return raw ? JSON.parse(raw) : null
+  } catch { return null }
+}
 
 // ── INICIALIZACIÓN ────────────────────────────────────────────
 async function iniciarApp() {
-  APP.sb = supabase.createClient(CSF_CONFIG.SUPABASE_URL, CSF_CONFIG.SUPABASE_ANON_KEY)
+  // FIX-S1: persistSession y autoRefreshToken evitan que la sesión expire
+  APP.sb = supabase.createClient(
+    CSF_CONFIG.SUPABASE_URL,
+    CSF_CONFIG.SUPABASE_ANON_KEY,
+    {
+      auth: {
+        persistSession:   true,   // guarda la sesión en localStorage
+        autoRefreshToken: true,   // renueva el token automáticamente
+        detectSessionInUrl: false,
+      }
+    }
+  )
+
+  // Escuchar cambios de auth (token renovado, sesión expirada, etc.)
+  APP.sb.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || !session) {
+      // Limpiar estado y mostrar login
+      APP.perfil  = null
+      APP.cuartel = null
+      APP._cuartelSeleccionado = null
+      APP.todosCuarteles = []
+      guardarCuartelLS(null)
+      mostrarLogin()
+    }
+  })
+
   const { data: { session } } = await APP.sb.auth.getSession()
   if (!session) { mostrarLogin(); return }
   await cargarPerfil(session.user.id)
@@ -36,17 +79,27 @@ async function cargarPerfil(userId) {
   const { data: perfil, error } = await APP.sb
     .from('usuarios').select('*, cuartel:cuarteles(*)').eq('id', userId).single()
   if (error || !perfil) { mostrarLogin(); return }
+
   APP.perfil  = perfil
   APP.cuartel = perfil.cuartel
 
-  // FIX B-CUARTEL: admin y comisario pueden ver todos los cuarteles.
-  // Cargar lista completa para el selector de cuartel.
   if (APP.esAdministrador() || APP.esComisario()) {
     const { data: todosLosCuarteles } = await APP.sb
       .from('cuarteles').select('*').eq('activo', true).order('nombre')
     APP.todosCuarteles = todosLosCuarteles || []
   } else {
     APP.todosCuarteles = perfil.cuartel ? [perfil.cuartel] : []
+  }
+
+  // FIX-S2: restaurar cuartel guardado en localStorage
+  // Solo aplica a admin/comisario sin cuartel propio fijo
+  if (!APP.cuartel && (APP.esAdministrador() || APP.esComisario())) {
+    const cuartelGuardado = recuperarCuartelLS()
+    // Verificar que el cuartel guardado siga en la lista actual
+    if (cuartelGuardado) {
+      const sigue = APP.todosCuarteles.find(c => c.id === cuartelGuardado.id)
+      APP._cuartelSeleccionado = sigue || null
+    }
   }
 
   mostrarApp()
@@ -92,13 +145,10 @@ function formatFechaCorta(dateStr) {
   return `${String(d.getDate()).padStart(2,'0')}-${String(d.getMonth()+1).padStart(2,'0')}-${d.getFullYear()}`
 }
 
-// ── B7: semanaISO — implementación ISO 8601 correcta ─────────
-// La semana 1 es la que contiene el primer jueves del año.
 function semanaISO(dateStr) {
   const d = new Date(dateStr + 'T12:00:00')
-  // Ajustar al jueves más cercano: semana ISO empieza el lunes
-  const day = d.getDay() || 7           // 1=lun … 7=dom
-  d.setDate(d.getDate() + 4 - day)      // mover al jueves de la semana
+  const day = d.getDay() || 7
+  d.setDate(d.getDate() + 4 - day)
   const yearStart = new Date(d.getFullYear(), 0, 1)
   return Math.ceil((((d - yearStart) / 86400000) + 1) / 7)
 }
@@ -107,20 +157,14 @@ function hoyISO() {
   return new Date().toISOString().split('T')[0]
 }
 
-// ── B5: mesAnteriorRef — edge case enero/febrero corregido ────
 function mesAnteriorRef() {
   const hoy  = new Date()
   let mes    = hoy.getMonth() + 1 - CSF_CONFIG.CSF_DESFASE_MESES
   let anio   = hoy.getFullYear()
-  // Ajustar cuando el mes retrocede al año anterior
-  while (mes <= 0) {
-    mes  += 12
-    anio -= 1
-  }
+  while (mes <= 0) { mes += 12; anio -= 1 }
   return { mes, anio }
 }
 
-// ── B9: obtenerValorUF con caché ─────────────────────────────
 async function obtenerValorUF(fecha) {
   if (APP._ufCache[fecha]) return APP._ufCache[fecha]
   try {
@@ -129,10 +173,10 @@ async function obtenerValorUF(fecha) {
     const r   = await fetch(url)
     const d   = await r.json()
     const val = d.serie?.[0]?.valor || 37000
-    APP._ufCache[fecha] = val          // guardar en caché
+    APP._ufCache[fecha] = val
     return val
   } catch {
-    APP._ufCache[fecha] = 37000        // fallback también cacheado
+    APP._ufCache[fecha] = 37000
     return 37000
   }
 }
@@ -141,7 +185,6 @@ function clpAUF(clp, valorUF) {
   return valorUF > 0 ? (clp / valorUF) : 0
 }
 
-// ── CÁLCULO CRITICIDAD P×C ────────────────────────────────────
 function nivelDesdeValorPxC(valor) {
   return CSF_CONFIG.PXC_NIVELES.find(n => valor >= n.min && valor <= n.max)?.nivel || 1
 }
@@ -170,7 +213,6 @@ function labelIDFI(valor) {
   return CSF_CONFIG.UMBRALES_IDFI.find(u => valor >= u.min && valor <= u.max) || CSF_CONFIG.UMBRALES_IDFI[3]
 }
 
-// ── DISTANCIA HAVERSINE ───────────────────────────────────────
 function distanciaKm(lat1, lon1, lat2, lon2) {
   const R    = 6371
   const dLat = (lat2 - lat1) * Math.PI / 180
@@ -181,14 +223,12 @@ function distanciaKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
 }
 
-// ── TURNO DESDE HORARIO ───────────────────────────────────────
 function detectarTurno(horaStr) {
   if (!horaStr) return 'diurno'
   const h = parseInt(horaStr.replace(/[()]/g,'').split(':')[0])
   return (h >= 20 || h < 8) ? 'nocturno' : 'diurno'
 }
 
-// ── GENERACIÓN DE CALENDARIO CSF ─────────────────────────────
 function generarCalendarioVisitas(punto, csf, fvcAsignada, turno, horaInicio, horaTermino) {
   const visitas = []
   const inicio  = new Date(csf.fecha_vigencia_inicio + 'T12:00:00')
@@ -215,44 +255,38 @@ function generarCalendarioVisitas(punto, csf, fvcAsignada, turno, horaInicio, ho
       cursor.setDate(cursor.getDate() + 7)
     }
   } else if (fvc === 'semanal') {
+    let quincena = 0
     while (cursor <= fin) {
       const v = new Date(cursor)
-      while (v.getDay() !== 4 && v <= fin) v.setDate(v.getDate() + 1)
+      v.setDate(v.getDate() + (quincena % 2 === 0 ? 2 : 5))
       if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
       cursor.setDate(cursor.getDate() + 7)
+      quincena++
     }
   } else if (fvc === 'quincenal') {
-    let quincena = 1
+    let quincena = 0
     while (cursor <= fin) {
       const v = new Date(cursor)
-      v.setDate(v.getDate() + (quincena === 1 ? 7 : 0))
+      if (quincena % 2 === 0) { v.setDate(7) } else { v.setDate(22) }
       if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
       cursor.setDate(cursor.getDate() + 15)
       quincena++
     }
   } else if (fvc === 'mensual') {
-    // 1 visita al mes: día 15 del período
     const v = new Date(inicio)
     v.setDate(15)
     if (v < inicio) v.setMonth(v.getMonth() + 1)
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
   } else if (fvc === 'bimestral') {
-    // 1 visita cada 2 meses: día 15 del mes de inicio de vigencia
-    const v = new Date(inicio)
-    v.setDate(15)
+    const v = new Date(inicio); v.setDate(15)
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
   } else if (fvc === 'trimestral') {
-    // 1 visita cada 3 meses: día 15 del mes de inicio de vigencia
-    const v = new Date(inicio)
-    v.setDate(15)
+    const v = new Date(inicio); v.setDate(15)
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
   } else if (fvc === 'semestral') {
-    // 1 visita cada 6 meses: día 15 del mes de inicio de vigencia
-    const v = new Date(inicio)
-    v.setDate(15)
+    const v = new Date(inicio); v.setDate(15)
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
   } else {
-    // fallback: 1 visita en el centro del período
     const v = new Date(inicio)
     v.setDate(Math.floor((inicio.getDate() + fin.getDate()) / 2))
     if (v <= fin) visitas.push({ numero: nro++, fecha: v.toISOString().split('T')[0], hora_inicio: horaInicio, hora_termino: horaTermino, turno })
@@ -271,7 +305,6 @@ function mostrarPantalla(id) {
     if (elP) elP.style.display = (p === id) ? 'block' : 'none'
   })
   qsa('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.pantalla === id))
-  // M1: sincronizar barra inferior móvil
   qsa('.mob-nav-btn').forEach(n => n.classList.toggle('mob-active', n.dataset.pantalla === id))
 }
 
@@ -286,9 +319,16 @@ function mostrarApp() {
   construirNavegacion()
   construirSelectorCuartel()
 
-  // Si el usuario tiene cuartel_id NULL (admin global), preguntar con qué cuartel trabajará
+  // FIX-S2: solo mostrar modal si no hay cuartel guardado en localStorage
   if (!APP.cuartel && (APP.esAdministrador() || APP.esComisario()) && APP.todosCuarteles.length > 0) {
-    mostrarModalSeleccionCuartel()
+    if (!APP._cuartelSeleccionado) {
+      // No hay cuartel guardado → preguntar solo esta vez
+      mostrarModalSeleccionCuartel()
+    } else {
+      // Hay cuartel guardado → entrar directo sin preguntar
+      mostrarPantalla('dashboard')
+      renderDashboard()
+    }
   } else {
     mostrarPantalla('dashboard')
     renderDashboard()
@@ -297,7 +337,6 @@ function mostrarApp() {
 
 // ── MODAL SELECCIÓN DE CUARTEL AL INICIO DE SESIÓN ───────────
 function mostrarModalSeleccionCuartel() {
-  // Crear modal si no existe
   let modal = el('modal-seleccion-cuartel')
   if (!modal) {
     modal = document.createElement('div')
@@ -318,7 +357,9 @@ function mostrarModalSeleccionCuartel() {
                     align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0">🏔</div>
         <div>
           <div style="font-weight:700;font-size:1rem;color:#1a1a1a">¿En qué cuartel vas a trabajar?</div>
-          <div style="font-size:.75rem;color:#666;margin-top:.1rem">Esta selección se mantendrá durante tu sesión</div>
+          <div style="font-size:.75rem;color:#666;margin-top:.1rem">
+            Se recordará hasta que cierres sesión
+          </div>
         </div>
       </div>
 
@@ -350,8 +391,6 @@ function mostrarModalSeleccionCuartel() {
     </div>`
 
   modal.style.display = 'flex'
-
-  // Foco en el select para teclado
   setTimeout(() => el('modal-cuartel-select')?.focus(), 100)
 }
 
@@ -361,7 +400,6 @@ function confirmarCuartelInicio(verTodos = false) {
   if (!verTodos) {
     const cuartelId = el('modal-cuartel-select')?.value
     if (!cuartelId) {
-      // Resaltar que debe seleccionar
       const sel = el('modal-cuartel-select')
       if (sel) { sel.style.borderColor = '#C0392B'; sel.focus() }
       return
@@ -369,13 +407,13 @@ function confirmarCuartelInicio(verTodos = false) {
     const cuartel = APP.todosCuarteles.find(c => c.id === cuartelId)
     if (cuartel) {
       APP._cuartelSeleccionado = cuartel
-      // Sincronizar selector del topbar
+      guardarCuartelLS(cuartel)       // FIX-S2: persistir en localStorage
       const topbarSel = el('selector-cuartel')
       if (topbarSel) topbarSel.value = cuartelId
     }
   } else {
-    // Ver todos: sin cuartel seleccionado
     APP._cuartelSeleccionado = null
+    guardarCuartelLS(null)            // FIX-S2: limpiar localStorage
     const topbarSel = el('selector-cuartel')
     if (topbarSel) topbarSel.value = ''
   }
@@ -385,12 +423,10 @@ function confirmarCuartelInicio(verTodos = false) {
   renderDashboard()
 }
 
-// FIX B-CUARTEL: selector de cuartel en topbar para admin/comisario
 function construirSelectorCuartel() {
   const wrap = el('topbar-cuartel-wrap')
   if (!wrap) return
 
-  // Digitador: solo ve su cuartel, sin selector
   if (APP.esDigitador() || APP.todosCuarteles.length <= 1) {
     wrap.innerHTML = `
       <span class="topbar-cuartel-label">Unidad:</span>
@@ -400,7 +436,6 @@ function construirSelectorCuartel() {
     return
   }
 
-  // Admin/Comisario: selector desplegable con todos los cuarteles
   wrap.innerHTML = `
     <span class="topbar-cuartel-label">Unidad:</span>
     <select id="selector-cuartel" class="topbar-cuartel-select"
@@ -416,15 +451,17 @@ function construirSelectorCuartel() {
       ).join('')}
     </select>`
 
-  // Inicializar con el cuartel propio del usuario (si tiene uno fijo)
   if (APP.cuartel) APP._cuartelSeleccionado = APP.cuartel
 }
 
 async function cambiarCuartelActivo(cuartelId) {
   if (!cuartelId) {
     APP._cuartelSeleccionado = null
+    guardarCuartelLS(null)            // FIX-S2: limpiar al elegir "todos"
   } else {
-    APP._cuartelSeleccionado = APP.todosCuarteles.find(c => c.id === cuartelId) || APP.cuartel
+    const cuartel = APP.todosCuarteles.find(c => c.id === cuartelId) || APP.cuartel
+    APP._cuartelSeleccionado = cuartel
+    guardarCuartelLS(cuartel)         // FIX-S2: persistir al cambiar
   }
   const pantAlerta = document.querySelector('.nav-item.active')?.dataset?.pantalla || 'dashboard'
   await navegarA(pantAlerta)
@@ -442,7 +479,6 @@ function construirNavegacion() {
   if (APP.esAdministrador() || APP.esComisario()) {
     items.push({ id: 'admin', label: 'Admin', icono: '⚙' })
   }
-  // Sidebar
   nav.innerHTML = items.map(i => `
     <button class="nav-item" data-pantalla="${i.id}" onclick="navegarA('${i.id}')">
       <span class="nav-icono">${i.icono}</span>
@@ -450,7 +486,6 @@ function construirNavegacion() {
     </button>
   `).join('')
 
-  // M1: barra inferior móvil
   const mob = el('mob-nav')
   if (mob) {
     mob.innerHTML = items.map(i => `
@@ -480,5 +515,6 @@ function cerrarSesion() {
   APP._ufCache = {}
   APP.todosCuarteles = []
   APP._cuartelSeleccionado = null
+  guardarCuartelLS(null)              // FIX-S2: limpiar localStorage al cerrar sesión
   mostrarLogin()
 }
