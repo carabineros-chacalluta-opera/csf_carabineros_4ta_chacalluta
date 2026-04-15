@@ -516,6 +516,9 @@ async function abrirFormServicio(servicioId) {
   _puntosDelCuartel    = puntos || []
   _puntosSeleccionados = []
 
+  // Cargar catálogo modo operandi para S6
+  await cargarModosOperandi()
+
   const [{ data: visitasExist }, { data: controlesExist }] = await Promise.all([
     APP.sb.from('visitas_puntos').select('*').eq('servicio_id', servicioId),
     APP.sb.from('controles_servicio').select('*').eq('servicio_id', servicioId).single(),
@@ -904,68 +907,135 @@ function agregarHallazgo() {
   el('hall-lista').appendChild(div)
 }
 
+// ============================================================
+// PATCH servicios.js — función agregarPersona() reemplazada
+// Todos los cambios BS Datos integrados en S6
+// ============================================================
+
+// ── Carga modos operandi desde BD al abrir el formulario ─────
+let _modosOperandi = []
+
+async function cargarModosOperandi() {
+  const { data } = await APP.sb
+    .from('catalogo_modo_operandi')
+    .select('*')
+    .eq('activo', true)
+    .order('orden')
+  _modosOperandi = data || []
+}
+
+function opcionesModosOperandi(tipoDelito) {
+  const genericos    = _modosOperandi.filter(m => !m.tipo_delito)
+  const especificos  = _modosOperandi.filter(m => m.tipo_delito === tipoDelito)
+  const todos        = [...especificos, ...genericos]
+  if (!todos.length) return '<option value="">— Sin opciones —</option>'
+  let opts = '<option value="">— Seleccionar —</option>'
+  if (especificos.length) {
+    opts += `<optgroup label="Específico para este delito">`
+    opts += especificos.map(m => `<option value="${m.id}">${m.descripcion}</option>`).join('')
+    opts += `</optgroup>`
+  }
+  opts += `<optgroup label="General">`
+  opts += genericos.map(m => `<option value="${m.id}">${m.descripcion}</option>`).join('')
+  opts += `</optgroup>`
+  return opts
+}
+
+// ── Formulario persona (S6) — REEMPLAZA agregarPersona() ─────
 function agregarPersona() {
   const id  = 'pers-' + Date.now()
   const div = document.createElement('div')
   div.id = id; div.className = 'sub-form'
   div.innerHTML = `
-    <div class="sub-form-header">Persona con resultado <button onclick="el('${id}').remove()" class="btn-sm-red">✕</button></div>
+    <div class="sub-form-header">
+      Persona con resultado
+      <button onclick="el('${id}').remove()" class="btn-sm-red">✕</button>
+    </div>
+
+    <!-- BLOQUE PRINCIPAL: siempre visible -->
     <div class="g2">
-      <div class="campo"><label>Grupo etario</label>
+      <div class="campo">
+        <label>Grupo etario</label>
         <select class="pers-etario" onchange="onEtarioChange(this,'${id}')">
           <option value="adulto">Adulto (18+)</option>
           <option value="nna">NNA (menor de 18)</option>
         </select>
       </div>
-      <div class="campo"><label>Sexo</label>
-        <select class="pers-sexo">
-          <option value="masculino">Masculino</option>
-          <option value="femenino">Femenino</option>
-          <option value="otro">Otro</option>
-        </select>
-      </div>
-      <div class="campo"><label>Nacionalidad</label>
-        <select class="pers-nac">
-          <option value="Chile">Chile</option><option value="Perú">Perú</option>
-          <option value="Bolivia">Bolivia</option><option value="Venezuela">Venezuela</option>
-          <option value="Colombia">Colombia</option><option value="Ecuador">Ecuador</option>
-          <option value="Haití">Haití</option><option value="Cuba">Cuba</option>
-          <option value="Argentina">Argentina</option><option value="otra">Otra</option>
+      <div class="campo">
+        <label>Resultado del procedimiento</label>
+        <select class="pers-resultado" onchange="onResultadoChangeBSD(this,'${id}')">
+          <option value="detencion">Detención por delito</option>
+          <option value="infraccion_migratoria">Infracción migratoria</option>
+          <option value="nna_irregular">NNA en situación irregular</option>
         </select>
       </div>
     </div>
-    <div class="campo"><label>¿Cómo se inició?</label>
-      <select class="pers-inicio">
-        <option value="control_identidad_preventivo">Control de identidad preventivo</option>
-        <option value="control_identidad_investigativo">Control de identidad investigativo</option>
-        <option value="control_migratorio">Control migratorio</option>
-        <option value="control_vehicular">Control vehicular</option>
-        <option value="patrullaje_flagrancia">Patrullaje / flagrancia en terreno</option>
+
+    <!-- Hora del evento (campo 25) -->
+    <div class="g2">
+      <div class="campo">
+        <label>Hora del procedimiento</label>
+        <input type="time" class="pers-hora-evento" onchange="onHoraEventoChange(this,'${id}')"/>
+      </div>
+      <div class="campo">
+        <label>Rango horario (calculado)</label>
+        <input type="text" class="pers-rango-hora" readonly placeholder="— selecciona hora —"
+               style="background:var(--surface-2);color:var(--muted)"/>
+      </div>
+    </div>
+
+    <!-- Punto asociado (campos 8-9 y 31-33) -->
+    <div class="campo">
+      <label>Punto asociado al procedimiento</label>
+      <select class="pers-punto" onchange="onPuntoPersonaChange(this,'${id}')">
+        ${listaPuntosSelect()}
       </select>
     </div>
-    <div class="campo"><label>Resultado</label>
-      <select class="pers-resultado" onchange="onResultadoChange(this,'${id}')">
-        <option value="detencion">Detención por delito</option>
-        <option value="infraccion_migratoria">Infracción migratoria</option>
-        <option value="nna_irregular">NNA en situación irregular</option>
-      </select>
+    <div id="coords-${id}" style="display:none">
+      <div class="g2">
+        <div class="campo">
+          <label style="font-size:.72rem;color:var(--muted)">Latitud (del punto)</label>
+          <input type="text" class="pers-lat" readonly style="background:var(--surface-2);color:var(--muted);font-size:.8rem"/>
+        </div>
+        <div class="campo">
+          <label style="font-size:.72rem;color:var(--muted)">Longitud (del punto)</label>
+          <input type="text" class="pers-lon" readonly style="background:var(--surface-2);color:var(--muted);font-size:.8rem"/>
+        </div>
+      </div>
     </div>
+
+    <!-- Detalle dinámico según resultado -->
     <div id="detalle-${id}"></div>
-    <div class="campo"><label>Punto asociado</label><select class="pers-punto">${listaPuntosSelect()}</select></div>
+
+    <!-- BLOQUE FFAA (condicional) -->
     <div id="bloque-ffaa-${id}">
       <div class="campo-check">
-        <label><input type="checkbox" onchange="toggleFFAA('${id}',this.checked)"/> ¿Tiene o tuvo vinculación con FFAA/Policía extranjera?</label>
+        <label>
+          <input type="checkbox" onchange="toggleFFAA('${id}',this.checked)"/>
+          ¿Tiene o tuvo vinculación con FFAA/Policía extranjera?
+        </label>
       </div>
       <div id="ffaa-${id}" style="display:none">
         <div class="g2">
           <div class="campo"><label>Condición</label>
-            <select class="pers-vinc"><option value="activo">Miembro activo</option><option value="exmiembro">Ex miembro (retirado)</option></select>
+            <select class="pers-vinc">
+              <option value="activo">Miembro activo</option>
+              <option value="exmiembro">Ex miembro (retirado)</option>
+            </select>
           </div>
           <div class="campo"><label>Institución</label>
-            <select class="pers-inst"><option value="FFAA">FFAA</option><option value="Policía">Policía</option><option value="Otra">Otra</option></select>
+            <select class="pers-inst">
+              <option value="FFAA">FFAA</option>
+              <option value="Policía">Policía</option>
+              <option value="Otra">Otra</option>
+            </select>
           </div>
-          <div class="campo"><label>País</label><input type="text" class="pers-pais" placeholder="País..."/></div>
-          <div class="campo"><label>Rango declarado</label><input type="text" class="pers-rango" placeholder="Rango..."/></div>
+          <div class="campo"><label>País</label>
+            <input type="text" class="pers-pais" placeholder="País..."/>
+          </div>
+          <div class="campo"><label>Rango declarado</label>
+            <input type="text" class="pers-rango" placeholder="Rango..."/>
+          </div>
         </div>
         <div style="display:flex;gap:1rem;font-size:.8rem;margin-top:.5rem">
           <label><input type="checkbox" class="pers-id-oficial"/> Portaba identificación oficial</label>
@@ -977,82 +1047,304 @@ function agregarPersona() {
         </div>
       </div>
     </div>`
+
   el('pers-lista').appendChild(div)
-  onResultadoChange(div.querySelector('.pers-resultado'), id)
+  onResultadoChangeBSD(div.querySelector('.pers-resultado'), id)
 }
 
-function onEtarioChange(sel, id) {
-  if (sel.value === 'nna') {
-    const res = el(id)?.querySelector('.pers-resultado')
-    if (res) { res.value = 'nna_irregular'; onResultadoChange(res, id) }
+// ── Calcula rango horario al cambiar la hora ──────────────────
+function onHoraEventoChange(input, id) {
+  const rango = calcularRangoHora(input.value)
+  const rangoEl = el(id)?.querySelector('.pers-rango-hora')
+  if (rangoEl) rangoEl.value = rango
+}
+
+// ── Autocompleta coordenadas al seleccionar punto ─────────────
+function onPuntoPersonaChange(sel, id) {
+  const puntoId = sel.value
+  const coordsDiv = el(`coords-${id}`)
+  if (!coordsDiv) return
+  if (!puntoId) { coordsDiv.style.display = 'none'; return }
+
+  const punto = _puntosDelCuartel.find(p => p.id === puntoId)
+  if (!punto) { coordsDiv.style.display = 'none'; return }
+
+  const latEl = el(id)?.querySelector('.pers-lat')
+  const lonEl = el(id)?.querySelector('.pers-lon')
+
+  if (punto.latitud && punto.longitud) {
+    if (latEl) latEl.value = punto.latitud
+    if (lonEl) lonEl.value = punto.longitud
+    coordsDiv.style.display = 'block'
+  } else {
+    if (latEl) latEl.value = 'Sin coordenadas cargadas'
+    if (lonEl) lonEl.value = 'Sin coordenadas cargadas'
+    coordsDiv.style.display = 'block'
   }
 }
 
-function onResultadoChange(sel, id) {
+// ── Reemplaza onResultadoChange con nueva lógica BS Datos ─────
+function onResultadoChangeBSD(sel, id) {
   const det = el(`detalle-${id}`)
   if (!det) return
-  if (sel.value === 'detencion') {
+  const resultado = sel.value
+
+  // Autocompletar destino y clasificación
+  const destAuto  = DESTINO_POR_RESULTADO[resultado] || 'parte_fiscalia'
+  const clasifAuto = CLASIFICACION_POR_RESULTADO[resultado] || 'denuncia'
+
+  if (resultado === 'detencion') {
     det.innerHTML = `
-      <div class="campo"><label>Tipo de delito</label>
-        <select class="pers-delito" onchange="onDelitoChange(this,'${id}')">
-          <optgroup label="Delitos COT → Fiscalía">
-            <option value="trafico_drogas">Tráfico de drogas (Ley 20.000)</option>
-            <option value="trafico_migrantes">Tráfico ilícito de migrantes</option>
-            <option value="trata_personas">Trata de personas</option>
-            <option value="contrabando">Contrabando de mercadería</option>
-            <option value="ley_17798_armas">Ley 17.798 — Control de Armas</option>
-            <option value="abigeato">Abigeato</option>
-            <option value="falsificacion_documentos">Falsificación de documentos</option>
-            <option value="receptacion">Receptación</option>
-            <option value="lavado_activos">Lavado de activos</option>
-            <option value="cohecho">Cohecho ⚨</option>
-          </optgroup>
-          <optgroup label="Órdenes pendientes → Fiscalía">
-            <option value="orden_judicial">Orden judicial nacional</option>
-            <option value="orden_interpol">Orden internacional / Interpol</option>
-          </optgroup>
-          <optgroup label="Otros → Fiscalía">
-            <option value="transito">Infracción Ley de Tránsito</option>
-            <option value="otro">Otro</option>
-          </optgroup>
-        </select>
+      <!-- Tipo de delito + ley automática -->
+      <div class="g2">
+        <div class="campo">
+          <label>Tipo de delito</label>
+          <select class="pers-delito" onchange="onDelitoBSDChange(this,'${id}')">
+            <optgroup label="Delitos COT → Fiscalía">
+              <option value="trafico_drogas">Tráfico de drogas</option>
+              <option value="trafico_migrantes">Tráfico ilícito de migrantes</option>
+              <option value="trata_personas">Trata de personas</option>
+              <option value="contrabando">Contrabando de mercadería</option>
+              <option value="ley_17798_armas">Ley 17.798 — Control de Armas</option>
+              <option value="abigeato">Abigeato</option>
+              <option value="falsificacion_documentos">Falsificación de documentos</option>
+              <option value="receptacion">Receptación</option>
+              <option value="lavado_activos">Lavado de activos</option>
+              <option value="cohecho">Cohecho ⚨</option>
+            </optgroup>
+            <optgroup label="Órdenes → Fiscalía">
+              <option value="orden_judicial">Orden judicial nacional</option>
+              <option value="orden_interpol">Orden internacional / Interpol</option>
+            </optgroup>
+            <optgroup label="Otros">
+              <option value="transito">Infracción Ley de Tránsito</option>
+              <option value="otro">Otro</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="campo">
+          <label>Ley aplicable <span style="font-size:.7rem;color:var(--muted)">(automático)</span></label>
+          <input type="text" class="pers-ley" readonly
+                 style="background:var(--surface-2);color:var(--verde-osc);font-weight:600"/>
+        </div>
       </div>
       <div id="subtipo-${id}"></div>
-      <div class="campo"><label>N° Parte policial</label><input type="text" class="pers-nro-doc" placeholder="N° parte..."/></div>`
-  } else if (sel.value === 'infraccion_migratoria') {
+      <div id="modo-op-${id}" class="campo">
+        <label>Modo operandi</label>
+        <select class="pers-modo-operandi">${opcionesModosOperandi('trafico_drogas')}</select>
+      </div>
+      <!-- N° Parte policial -->
+      <div class="g2">
+        <div class="campo">
+          <label>N° Parte Policial</label>
+          <input type="text" class="pers-nro-doc" placeholder="N° parte..."/>
+        </div>
+        <div class="campo">
+          <label>Destino <span style="font-size:.7rem;color:var(--muted)">(automático)</span></label>
+          <input type="text" class="pers-destino-doc" readonly value="Fiscalía"
+                 style="background:var(--surface-2);color:var(--verde-osc);font-weight:600"/>
+        </div>
+      </div>
+      <!-- Organismo detección -->
+      <div class="campo">
+        <label>Organismo que detectó el procedimiento</label>
+        <select class="pers-organismo">
+          <option value="carabineros">Carabineros de Chile</option>
+          <option value="armada">Armada de Chile</option>
+          <option value="ejercito">Ejército de Chile</option>
+          <option value="otro">Otro / Denuncia</option>
+        </select>
+      </div>
+      <!-- Datos personales del detenido -->
+      <div style="background:var(--surface-2);border:1px solid var(--border-light);border-radius:var(--r);padding:.75rem;margin-top:.5rem">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--verde-osc);margin-bottom:.6rem">
+          Datos del detenido
+        </div>
+        <div class="g2">
+          <div class="campo"><label>Nombres</label>
+            <input type="text" class="pers-nombres" placeholder="Nombres..."/>
+          </div>
+          <div class="campo"><label>Apellidos</label>
+            <input type="text" class="pers-apellidos" placeholder="Apellidos..."/>
+          </div>
+          <div class="campo"><label>Sexo</label>
+            <select class="pers-sexo">
+              <option value="masculino">Masculino</option>
+              <option value="femenino">Femenino</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div class="campo"><label>Edad</label>
+            <input type="number" class="pers-edad-nna" min="0" max="120" placeholder="años"/>
+          </div>
+          <div class="campo"><label>Nacionalidad</label>
+            <select class="pers-nac" onchange="onNacChange(this,'${id}')">
+              <option value="Chile">Chile</option>
+              <option value="Perú">Perú</option>
+              <option value="Bolivia">Bolivia</option>
+              <option value="Venezuela">Venezuela</option>
+              <option value="Colombia">Colombia</option>
+              <option value="Ecuador">Ecuador</option>
+              <option value="Haití">Haití</option>
+              <option value="Cuba">Cuba</option>
+              <option value="Argentina">Argentina</option>
+              <option value="otra">Otra</option>
+            </select>
+          </div>
+          <div class="campo"><label>Domicilio declarado</label>
+            <input type="text" class="pers-domicilio" placeholder="Domicilio..."/>
+          </div>
+        </div>
+        <!-- Sin documento: visible cuando es extranjero -->
+        <div id="sin-doc-${id}" style="display:none;margin-top:.4rem">
+          <label style="font-size:.82rem">
+            <input type="checkbox" class="pers-sin-doc"/>
+            Sin documento de identidad (SIN DOC)
+          </label>
+        </div>
+      </div>`
+    // Disparar cambio de delito para poner ley y modo operandi inicial
+    const delitoSel = det.querySelector('.pers-delito')
+    if (delitoSel) onDelitoBSDChange(delitoSel, id)
+
+  } else if (resultado === 'infraccion_migratoria') {
     det.innerHTML = `
+      <!-- Ley automática -->
+      <div class="g2">
+        <div class="campo">
+          <label>Ley aplicable <span style="font-size:.7rem;color:var(--muted)">(automático)</span></label>
+          <input type="text" class="pers-ley" readonly value="Ley 21.325 (Migración)"
+                 style="background:var(--surface-2);color:var(--verde-osc);font-weight:600"/>
+        </div>
+        <div class="campo">
+          <label>Destino <span style="font-size:.7rem;color:var(--muted)">(automático)</span></label>
+          <input type="text" class="pers-destino-doc" readonly value="PDI (Oficio)"
+                 style="background:var(--surface-2);color:var(--verde-osc);font-weight:600"/>
+        </div>
+      </div>
+      <!-- Cómo se inició: solo para infracciones migratorias -->
+      <div class="campo">
+        <label>¿Cómo se inició el procedimiento?</label>
+        <select class="pers-inicio">
+          <option value="autodenuncia">Autodenuncia</option>
+          <option value="patrullaje_flagrancia">Flagrancia en terreno</option>
+          <option value="control_migratorio">Control migratorio</option>
+        </select>
+      </div>
       <div class="g2">
         <div class="campo"><label>Situación migratoria</label>
           <select class="pers-sit-mig">
-            <option value="irregular">Irregular</option><option value="regular">Regular</option>
-            <option value="en_tramite">En trámite</option><option value="sin_documentos">Sin documentos</option>
-          </select>
-        </div>
-        <div class="campo"><label>Tipo de ingreso</label>
-          <select class="pers-ing">
-            <option value="paso_no_habilitado">Paso no habilitado</option>
-            <option value="paso_habilitado">Paso habilitado</option>
-            <option value="desconocido">Desconocido</option>
+            <option value="irregular">Irregular</option>
+            <option value="regular">Regular</option>
+            <option value="en_tramite">En trámite</option>
+            <option value="sin_documentos">Sin documentos</option>
           </select>
         </div>
         <div class="campo"><label>Gestión</label>
           <select class="pers-gestion" onchange="onGestionChange(this,'${id}')">
             <option value="reconducido">Reconducido (≤10 km LPI)</option>
-            <option value="denunciado_extranjeria">Denunciado — Ley Extranjería → Oficio PDI</option>
+            <option value="denunciado_extranjeria">Denunciado — Ley Extranjería → PDI</option>
             <option value="detenido_trafico">Detenido — Tráfico migrantes → Fiscalía</option>
             <option value="detenido_trata">Detenido — Trata personas → Fiscalía</option>
           </select>
         </div>
       </div>
-      <div id="gestion-extra-${id}"></div>`
+      <!-- Modo operandi -->
+      <div class="campo">
+        <label>Modo operandi</label>
+        <select class="pers-modo-operandi">${opcionesModosOperandi('infraccion_migratoria')}</select>
+      </div>
+      <!-- N° Oficio -->
+      <div class="g2">
+        <div class="campo">
+          <label>N° Oficio</label>
+          <input type="text" class="pers-nro-doc" placeholder="N° oficio..."/>
+        </div>
+        <div class="campo">
+          <label>Organismo que detectó</label>
+          <select class="pers-organismo">
+            <option value="carabineros">Carabineros de Chile</option>
+            <option value="armada">Armada de Chile</option>
+            <option value="ejercito">Ejército de Chile</option>
+            <option value="otro">Otro / Denuncia</option>
+          </select>
+        </div>
+      </div>
+      <!-- Lugar de ingreso al país -->
+      <div id="gestion-extra-${id}"></div>
+      <!-- Datos personales del infractor -->
+      <div style="background:var(--surface-2);border:1px solid var(--border-light);border-radius:var(--r);padding:.75rem;margin-top:.5rem">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--verde-osc);margin-bottom:.6rem">
+          Datos del infractor
+        </div>
+        <div class="g2">
+          <div class="campo"><label>Nombres</label>
+            <input type="text" class="pers-nombres" placeholder="Nombres..."/>
+          </div>
+          <div class="campo"><label>Apellidos</label>
+            <input type="text" class="pers-apellidos" placeholder="Apellidos..."/>
+          </div>
+          <div class="campo"><label>Sexo</label>
+            <select class="pers-sexo">
+              <option value="masculino">Masculino</option>
+              <option value="femenino">Femenino</option>
+              <option value="otro">Otro</option>
+            </select>
+          </div>
+          <div class="campo"><label>Edad</label>
+            <input type="number" class="pers-edad-nna" min="0" max="120" placeholder="años"/>
+          </div>
+          <div class="campo"><label>Nacionalidad</label>
+            <select class="pers-nac" onchange="onNacChange(this,'${id}')">
+              <option value="Chile">Chile</option>
+              <option value="Perú">Perú</option>
+              <option value="Bolivia">Bolivia</option>
+              <option value="Venezuela">Venezuela</option>
+              <option value="Colombia">Colombia</option>
+              <option value="Ecuador">Ecuador</option>
+              <option value="Haití">Haití</option>
+              <option value="Cuba">Cuba</option>
+              <option value="Argentina">Argentina</option>
+              <option value="otra">Otra</option>
+            </select>
+          </div>
+          <div class="campo"><label>Domicilio declarado</label>
+            <input type="text" class="pers-domicilio" placeholder="Domicilio..."/>
+          </div>
+        </div>
+        <div id="sin-doc-${id}" style="margin-top:.4rem">
+          <label style="font-size:.82rem">
+            <input type="checkbox" class="pers-sin-doc"/>
+            Sin documento de identidad (SIN DOC)
+          </label>
+        </div>
+      </div>`
     onGestionChange(det.querySelector('.pers-gestion'), id)
+
   } else {
+    // NNA irregular — mantener lógica existente
     det.innerHTML = `
       <div style="background:var(--amarillo-cl);border:1.5px solid var(--amarillo);border-radius:8px;padding:.75rem;margin-bottom:.75rem;font-size:.82rem;font-weight:600;">
         ⚠️ ALERTA AUTOMÁTICA — Se notificará al Comisario
       </div>
       <div class="g2">
-        <div class="campo"><label>Edad</label><input type="number" class="pers-edad-nna" min="0" max="17" placeholder="años"/></div>
+        <div class="campo"><label>Edad</label>
+          <input type="number" class="pers-edad-nna" min="0" max="17" placeholder="años"/>
+        </div>
+        <div class="campo"><label>Sexo</label>
+          <select class="pers-sexo">
+            <option value="masculino">Masculino</option>
+            <option value="femenino">Femenino</option>
+            <option value="otro">Otro</option>
+          </select>
+        </div>
+        <div class="campo"><label>Nacionalidad</label>
+          <select class="pers-nac">
+            <option value="Chile">Chile</option><option value="Perú">Perú</option>
+            <option value="Bolivia">Bolivia</option><option value="Venezuela">Venezuela</option>
+            <option value="otra">Otra</option>
+          </select>
+        </div>
         <div class="campo"><label>¿Acompañado?</label>
           <select class="pers-acomp" onchange="onAcompChange(this,'${id}')">
             <option value="solo">Solo / sin adulto responsable</option>
@@ -1068,8 +1360,30 @@ function onResultadoChange(sel, id) {
         </div>
       </div>
       <div id="adulto-${id}"></div>
-      <div class="campo"><label>N° documento</label><input type="text" class="pers-nro-doc" placeholder="N° parte o documento..."/></div>`
+      <div class="campo"><label>N° documento</label>
+        <input type="text" class="pers-nro-doc" placeholder="N° parte o documento..."/>
+      </div>`
   }
+}
+
+// ── Al cambiar delito: actualiza ley y modos operandi ─────────
+function onDelitoBSDChange(sel, id) {
+  const det     = el(`detalle-${id}`)
+  const leyEl   = det?.querySelector('.pers-ley')
+  const modoSel = det?.querySelector('.pers-modo-operandi')
+
+  if (leyEl)   leyEl.value = LEY_POR_DELITO[sel.value] || 'Código Penal'
+  if (modoSel) modoSel.innerHTML = opcionesModosOperandi(sel.value)
+
+  // Subtipo (lógica existente para drogas y contrabando)
+  onDelitoChange(sel, id)
+}
+
+// ── Mostrar/ocultar "SIN DOC" según nacionalidad ──────────────
+function onNacChange(sel, id) {
+  const sinDocDiv = el(`sin-doc-${id}`)
+  if (!sinDocDiv) return
+  sinDocDiv.style.display = sel.value !== 'Chile' ? 'block' : 'none'
 }
 
 function onDelitoChange(sel, id) {
@@ -1167,6 +1481,26 @@ function onAcompChange(sel, id) {
   }
 }
 
+function onAcompChange(sel, id) {
+  const div = el(`adulto-${id}`)
+  if (!div) return
+  if (sel.value === 'acompanado') {
+    div.innerHTML = `
+      <div class="campo"><label>Vínculo con NNA</label>
+        <select class="pers-vinculo-nna">
+          <option value="padre_madre">Padre / Madre</option>
+          <option value="familiar">Familiar declarado</option>
+          <option value="sin_vinculo">Sin vínculo conocido (posible traficante)</option>
+        </select>
+      </div>
+      <div style="background:var(--rojo-cl);border-radius:6px;padding:.5rem;font-size:.75rem;color:var(--rojo)">
+        → El adulto acompañante quedará registrado como imputado automáticamente
+      </div>`
+  } else {
+    div.innerHTML = ''
+  }
+}
+
 function toggleFFAA(id, show) {
   const div = el(`ffaa-${id}`)
   if (div) div.style.display = show ? 'block' : 'none'
@@ -1181,7 +1515,6 @@ function setProgreso(pct, label) {
   if (barra) barra.style.width  = pct + '%'
   if (lbl)   lbl.textContent    = label
 }
-
 // ── GUARDAR SERVICIO ──────────────────────────────────────────
 async function guardarServicio() {
   if (!_servicioActual) return
@@ -1305,54 +1638,100 @@ async function guardarServicio() {
 
     // S6 — Personas
     setProgreso(92, 'Guardando S6: personas registradas...')
-    const persItems = qsa('.sub-form[id^="pers-"]')
-    for (const p of persItems) {
-      const delito     = p.querySelector('.pers-delito')?.value
-      const esCohecho  = delito === 'cohecho'
-      const esInterpol = delito === 'orden_interpol'
-      const esNNA      = p.querySelector('.pers-etario')?.value === 'nna'
+// ============================================================
+// PATCH guardarServicio() — bloque S6 actualizado
+// Reemplaza el for loop de persItems en servicios.js
+// ============================================================
 
-      await APP.sb.from('personas_registradas').insert({
-        servicio_id:            svcId,
-        punto_id:               p.querySelector('.pers-punto')?.value || null,
-        grupo_etario:           p.querySelector('.pers-etario')?.value,
-        sexo:                   p.querySelector('.pers-sexo')?.value,
-        nacionalidad:           p.querySelector('.pers-nac')?.value,
-        edad:                   parseInt(p.querySelector('.pers-edad-nna')?.value)||null,
-        como_inicio:            p.querySelector('.pers-inicio')?.value,
-        tipo_resultado:         p.querySelector('.pers-resultado')?.value,
-        tipo_delito:            delito || null,
-        situacion_migratoria:   p.querySelector('.pers-sit-mig')?.value || null,
-        tipo_ingreso:           p.querySelector('.pers-ing')?.value || null,
-        tipo_gestion_migratoria:p.querySelector('.pers-gestion')?.value || null,
-        nro_documento:          p.querySelector('.pers-nro-doc')?.value || null,
-        distancia_lpi_km:       parseFloat(p.querySelector('.pers-dist-lpi')?.value)||null,
-        nna_acompanado:         p.querySelector('.pers-acomp')?.value === 'acompanado',
-        nna_vinculo_adulto:     p.querySelector('.pers-vinculo-nna')?.value || null,
-        nna_derivacion:         p.querySelector('.pers-deriv')?.value || null,
-        vinculacion_inst:       p.querySelector('.pers-vinc')?.value || null,
-        institucion_extranjera: p.querySelector('.pers-inst')?.value || null,
-        pais_extranjero:        p.querySelector('.pers-pais')?.value || null,
-        rango_declarado:        p.querySelector('.pers-rango')?.value || null,
-        portaba_identificacion: p.querySelector('.pers-id-oficial')?.checked || false,
-        estaba_uniformado:      p.querySelector('.pers-uniformado')?.checked || false,
-        elemento_interes:       p.querySelector('.pers-interes')?.value || null,
-        genera_alerta_cohecho:  esCohecho,
-        genera_alerta_nna:      esNNA,
-        genera_alerta_interpol: esInterpol,
-      })
+// S6 — Personas (reemplazar el for loop existente desde línea ~1308)
+const persItems = qsa('.sub-form[id^="pers-"]')
+for (const p of persItems) {
+  const delito      = p.querySelector('.pers-delito')?.value
+  const resultado   = p.querySelector('.pers-resultado')?.value
+  const esCohecho   = delito === 'cohecho'
+  const esInterpol  = delito === 'orden_interpol'
+  const esNNA       = p.querySelector('.pers-etario')?.value === 'nna'
+  const horaEvento  = p.querySelector('.pers-hora-evento')?.value || null
+  const puntoId     = p.querySelector('.pers-punto')?.value || null
 
-      if (esCohecho) await APP.sb.from('alertas').insert({
-        cuartel_id: _servicioActual.cuartel_id, tipo: 'cohecho',
-        detalle: `Cohecho detectado en servicio ${fecha}`, servicio_id: svcId })
-      if (esNNA) await APP.sb.from('alertas').insert({
-        cuartel_id: _servicioActual.cuartel_id, tipo: 'nna',
-        detalle: `NNA en situación irregular detectado - ${fecha}`, servicio_id: svcId })
-      if (esInterpol) await APP.sb.from('alertas').insert({
-        cuartel_id: _servicioActual.cuartel_id, tipo: 'interpol',
-        detalle: `Objetivo internacional capturado - ${fecha}`, servicio_id: svcId })
-    }
+  // Coordenadas del punto asociado
+  const punto = puntoId ? _puntosDelCuartel.find(pt => pt.id === puntoId) : null
+  const latProc = punto?.latitud  || null
+  const lonProc = punto?.longitud || null
 
+  // Clasificación automática del caso
+  let clasificacionCaso = 'denuncia'
+  if (resultado === 'detencion')              clasificacionCaso = 'detenido'
+  else if (resultado === 'infraccion_migratoria') {
+    const gestion = p.querySelector('.pers-gestion')?.value
+    clasificacionCaso = gestion === 'reconducido' ? 'denuncia' : 'infraccion'
+  }
+
+  // Destino automático
+  const destinoDoc = resultado === 'detencion' ? 'parte_fiscalia'
+                   : resultado === 'infraccion_migratoria' ? 'oficio_pdi'
+                   : 'acta_reconduccion'
+
+  // Ley aplicable automática
+  const leyAplicable = LEY_POR_DELITO[delito] ||
+                       (resultado === 'infraccion_migratoria' ? 'Ley 21.325 (Migración)' : null)
+
+  await APP.sb.from('personas_registradas').insert({
+    servicio_id:              svcId,
+    punto_id:                 puntoId,
+    grupo_etario:             p.querySelector('.pers-etario')?.value,
+    sexo:                     p.querySelector('.pers-sexo')?.value,
+    nacionalidad:             p.querySelector('.pers-nac')?.value,
+    edad:                     parseInt(p.querySelector('.pers-edad-nna')?.value) || null,
+    nombres:                  p.querySelector('.pers-nombres')?.value?.trim() || null,
+    apellidos:                p.querySelector('.pers-apellidos')?.value?.trim() || null,
+    domicilio:                p.querySelector('.pers-domicilio')?.value?.trim() || null,
+    como_inicio:              p.querySelector('.pers-inicio')?.value || null,
+    tipo_resultado:           resultado,
+    tipo_delito:              delito || null,
+    ley_aplicable:            leyAplicable,
+    situacion_migratoria:     p.querySelector('.pers-sit-mig')?.value || null,
+    tipo_ingreso:             p.querySelector('.pers-ing')?.value || null,
+    tipo_gestion_migratoria:  p.querySelector('.pers-gestion')?.value || null,
+    destino_documento:        destinoDoc,
+    nro_documento:            p.querySelector('.pers-nro-doc')?.value || null,
+    distancia_lpi_km:         parseFloat(p.querySelector('.pers-dist-lpi')?.value) || null,
+    nna_acompanado:           p.querySelector('.pers-acomp')?.value === 'acompanado',
+    nna_vinculo_adulto:       p.querySelector('.pers-vinculo-nna')?.value || null,
+    nna_derivacion:           p.querySelector('.pers-deriv')?.value || null,
+    vinculacion_inst:         p.querySelector('.pers-vinc')?.value || null,
+    institucion_extranjera:   p.querySelector('.pers-inst')?.value || null,
+    pais_extranjero:          p.querySelector('.pers-pais')?.value || null,
+    rango_declarado:          p.querySelector('.pers-rango')?.value || null,
+    portaba_identificacion:   p.querySelector('.pers-id-oficial')?.checked || false,
+    estaba_uniformado:        p.querySelector('.pers-uniformado')?.checked || false,
+    elemento_interes:         p.querySelector('.pers-interes')?.value || null,
+    // ── NUEVOS CAMPOS BS DATOS ────────────────────────
+    hora_evento:              horaEvento,
+    latitud_procedimiento:    latProc,
+    longitud_procedimiento:   lonProc,
+    modo_operandi_id:         p.querySelector('.pers-modo-operandi')?.value || null,
+    clasificacion_caso:       clasificacionCaso,
+    organismo_deteccion:      p.querySelector('.pers-organismo')?.value || null,
+    sin_documento:            p.querySelector('.pers-sin-doc')?.checked || false,
+    // punto_ingreso_id se captura en infracciones migratorias (mismo que punto_id en ese contexto)
+    punto_ingreso_id:         resultado === 'infraccion_migratoria' ? puntoId : null,
+    // ─────────────────────────────────────────────────
+    genera_alerta_cohecho:    esCohecho,
+    genera_alerta_nna:        esNNA,
+    genera_alerta_interpol:   esInterpol,
+  })
+
+  if (esCohecho) await APP.sb.from('alertas').insert({
+    cuartel_id: _servicioActual.cuartel_id, tipo: 'cohecho',
+    detalle: `Cohecho detectado en servicio ${fecha}`, servicio_id: svcId })
+  if (esNNA) await APP.sb.from('alertas').insert({
+    cuartel_id: _servicioActual.cuartel_id, tipo: 'nna',
+    detalle: `NNA en situación irregular detectado - ${fecha}`, servicio_id: svcId })
+  if (esInterpol) await APP.sb.from('alertas').insert({
+    cuartel_id: _servicioActual.cuartel_id, tipo: 'interpol',
+    detalle: `Objetivo internacional capturado - ${fecha}`, servicio_id: svcId })
+}
     setProgreso(100, '¡Guardado correctamente!')
     setTimeout(() => {
       toast('Servicio guardado correctamente', 'ok')
