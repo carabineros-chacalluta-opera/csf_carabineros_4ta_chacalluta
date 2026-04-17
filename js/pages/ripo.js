@@ -4,7 +4,7 @@
 // Genera las 8 hojas del formato_ripo.xlsx
 // ============================================================
 
-const MESES_ES = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio',
+const MESES_RIPO = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio',
                   'Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
 // ── Render pantalla RIPO ──────────────────────────────────────
@@ -23,7 +23,7 @@ async function renderRipo() {
             <label>Mes</label>
             <select id="ripo-mes">
               ${Array.from({length:12},(_,i)=>i+1).map(m=>
-                `<option value="${m}" ${m===new Date().getMonth()+1?'selected':''}>${MESES_ES[m]}</option>`
+                `<option value="${m}" ${m===new Date().getMonth()+1?'selected':''}>${MESES_RIPO[m]}</option>`
               ).join('')}
             </select>
           </div>
@@ -161,7 +161,7 @@ async function generarRipo() {
   const nomCuartel = cuartelId
     ? (cuarteles?.find(c=>c.id===cuartelId)?.nombre?.replace(' (F)','').replace(/\s+/g,'_') || 'CUARTEL')
     : 'TODOS'
-  const fname = `RIPO_${nomCuartel}_${MESES_ES[mes].toUpperCase()}_${anio}.xlsx`
+  const fname = `RIPO_${nomCuartel}_${MESES_RIPO[mes].toUpperCase()}_${anio}.xlsx`
   XLSX.writeFile(wb, fname)
   estado.innerHTML = `<div class="card" style="padding:1rem;color:var(--verde);font-weight:600">✅ RIPO generado: ${fname}</div>`
   toast('RIPO descargado correctamente', 'ok')
