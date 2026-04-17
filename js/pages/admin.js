@@ -13,6 +13,10 @@ async function renderAdmin() {
     el('pantalla-admin').innerHTML = '<div class="container"><div class="card" style="text-align:center;padding:2rem;color:var(--muted)">Acceso restringido</div></div>'
     return
   }
+  if (!APP.cuartelActivo()?.id) {
+    el('pantalla-admin').innerHTML = '<div class="container"><div class="card" style="text-align:center;padding:2rem;color:var(--muted)">⚠ Selecciona un cuartel desde el selector superior para acceder a la administración.</div></div>'
+    return
+  }
   el('pantalla-admin').innerHTML = `
     <div class="container">
       <h2 class="page-titulo">Administración</h2>
@@ -49,7 +53,7 @@ async function cambiarTabAdmin(tab) {
 // ── PUNTOS TERRITORIALES ─────────────────────────────────────
 async function adminPuntos() {
   const { data: puntos } = await APP.sb.from('puntos_territoriales')
-    .select('*').eq('cuartel_id', APP.cuartel.id).order('tipo').order('nombre')
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).order('tipo').order('nombre')
 
   el('admin-contenido').innerHTML = `
     <div class="card" style="margin-bottom:.75rem">
@@ -176,7 +180,7 @@ function htmlFormPunto(p) {
 async function guardarPunto() {
   const id  = el('punto-id')?.value
   const dat = {
-    cuartel_id:        APP.cuartel.id,
+    cuartel_id:        APP.cuartelActivo()?.id,
     nombre:            el('punto-nombre')?.value?.trim(),
     tipo:              el('punto-tipo')?.value,
     nombre_completo:   el('punto-nombre-completo')?.value?.trim(),
@@ -205,7 +209,7 @@ async function toggleActivoPunto(id, activo) {
 // ── PERSONAL ─────────────────────────────────────────────────
 async function adminPersonal() {
   const { data: personal } = await APP.sb.from('personal_cuartel')
-    .select('*').eq('cuartel_id', APP.cuartel.id).order('codigo_funcionario')
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).order('codigo_funcionario')
 
   el('admin-contenido').innerHTML = `
     <div class="card">
@@ -245,7 +249,7 @@ async function guardarPersonal() {
   const codigo = el('nuevo-codigo')?.value?.trim()
   if (!codigo) { toast('Ingrese un código','err'); return }
   const { error } = await APP.sb.from('personal_cuartel').upsert(
-    { cuartel_id: APP.cuartel.id, codigo_funcionario: codigo, activo: true },
+    { cuartel_id: APP.cuartelActivo()?.id, codigo_funcionario: codigo, activo: true },
     { onConflict: 'codigo_funcionario,cuartel_id' }
   )
   if (error) { toast('Error: '+error.message,'err'); return }
@@ -272,7 +276,7 @@ async function adminUsuarios() {
   // Intentar cargar usuarios del mismo cuartel via join
   const { data: usuarios } = await APP.sb.from('usuarios')
     .select('*,cuartel:cuarteles(nombre)')
-    .eq('cuartel_id', APP.cuartel.id)
+    .eq('cuartel_id', APP.cuartelActivo()?.id)
     .order('rol')
 
   el('admin-contenido').innerHTML = `
@@ -333,7 +337,7 @@ async function toggleActivoUsuario(id, activo) {
 // B2: persiste en tabla config_cuartel
 async function adminDenominadores() {
   const { data: puntos } = await APP.sb.from('puntos_territoriales')
-    .select('*').eq('cuartel_id', APP.cuartel.id).eq('activo', true).order('tipo').order('nombre')
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).eq('activo', true).order('tipo').order('nombre')
 
   const hitos = (puntos||[]).filter(p => p.tipo === 'hito').length
   const pnhs  = (puntos||[]).filter(p => p.tipo === 'pnh').length
@@ -341,7 +345,7 @@ async function adminDenominadores() {
 
   // Cargar config guardada
   const { data: cfg } = await APP.sb.from('config_cuartel')
-    .select('*').eq('cuartel_id', APP.cuartel.id).single()
+    .select('*').eq('cuartel_id', APP.cuartelActivo()?.id).single()
 
   el('admin-contenido').innerHTML = `
     <div class="card">
@@ -410,7 +414,7 @@ async function guardarConfigIDFI() {
   const total_func           = parseInt(el('meta-func')?.value)  || 0
 
   const { error } = await APP.sb.from('config_cuartel').upsert({
-    cuartel_id:               APP.cuartel.id,
+    cuartel_id:               APP.cuartelActivo()?.id,
     meta_uf_mensual:          meta_uf,
     objetivos_internacionales: objetivos_inter,
     total_funcionarios:       total_func,
@@ -430,7 +434,7 @@ async function guardarConfigIDFI() {
 async function adminReportesIntel() {
   const { data: reportes } = await APP.sb.from('reportes_inteligencia')
     .select('*,observacion:observaciones_intel(descripcion,tipo_hallazgo,nivel_relevancia)')
-    .eq('cuartel_id', APP.cuartel.id)
+    .eq('cuartel_id', APP.cuartelActivo()?.id)
     .order('fecha_generado', { ascending: false })
     .limit(30)
 
