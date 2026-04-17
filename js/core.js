@@ -297,7 +297,7 @@ function generarCalendarioVisitas(punto, csf, fvcAsignada, turno, horaInicio, ho
 }
 
 // ── ROUTER ───────────────────────────────────────────────────
-const PANTALLAS = ['login','dashboard','servicios','csf','reportes','admin']
+const PANTALLAS = ['login','dashboard','servicios','csf','reportes','admin','capacitaciones','ripo']
 
 function mostrarPantalla(id) {
   PANTALLAS.forEach(p => {
@@ -471,10 +471,12 @@ function construirNavegacion() {
   const nav = el('nav-items')
   if (!nav) return
   const items = [
-    { id: 'dashboard', label: 'Dashboard', icono: '◈' },
-    { id: 'servicios', label: 'Servicios', icono: '📋' },
-    { id: 'csf',       label: 'CSF',       icono: '📄' },
-    { id: 'reportes',  label: 'Reportes',  icono: '📊' },
+    { id: 'dashboard',      label: 'Dashboard',      icono: '◈' },
+    { id: 'servicios',      label: 'Servicios',      icono: '📋' },
+    { id: 'csf',            label: 'CSF',            icono: '📄' },
+    { id: 'capacitaciones', label: 'Capacitaciones', icono: '🎓' },
+    { id: 'reportes',       label: 'Reportes',       icono: '📊' },
+    { id: 'ripo',           label: 'RIPO',           icono: '📁' },
   ]
   if (APP.esAdministrador() || APP.esComisario()) {
     items.push({ id: 'admin', label: 'Admin', icono: '⚙' })
@@ -500,11 +502,13 @@ function construirNavegacion() {
 async function navegarA(pantalla) {
   mostrarPantalla(pantalla)
   switch(pantalla) {
-    case 'dashboard': await renderDashboard(); break
-    case 'servicios': await renderServicios(); break
-    case 'csf':       await renderCSF();       break
-    case 'reportes':  await renderReportes();  break
-    case 'admin':     await renderAdmin();     break
+    case 'dashboard':      await renderDashboard();      break
+    case 'servicios':      await renderServicios();      break
+    case 'csf':            await renderCSF();            break
+    case 'reportes':       await renderReportes();       break
+    case 'admin':          await renderAdmin();          break
+    case 'capacitaciones': await renderCapacitaciones(); break
+    case 'ripo':           await renderRipo();           break
   }
 }
 
