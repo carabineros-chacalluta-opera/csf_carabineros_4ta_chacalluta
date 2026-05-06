@@ -100,12 +100,7 @@ async function adminPuntos() {
               <td style="padding:.3rem .6rem;text-align:center">
                 <button class="btn btn-sm btn-secundario" onclick="editarPunto('${p.id}')">Editar</button>
               </td>
-              ${esAdmin ? `<td style="padding:.3rem .6rem;text-align:center">
-                <button class="btn btn-sm" style="background:#fff3e0;border:1px solid #ff9800;color:#e65100;font-size:.68rem;padding:.2rem .45rem;border-radius:4px"
-                  onclick="modalReasignarPunto('${p.id}','${p.nombre.replace(/'/g,"").replace(/"/g,"")}')">
-                  Cambiar cuartel
-                </button>
-              </td>` : ''}
+              ${esAdmin ? '<td style="padding:.3rem .6rem;text-align:center"><button class="btn btn-sm" style="background:#fff3e0;border:1px solid #ff9800;color:#e65100;font-size:.68rem;padding:.2rem .45rem;border-radius:4px" onclick="modalReasignarPunto(\'' + p.id + '\',\'' + p.nombre.replace(/'/g,'').replace(/"/g,'') + '\')">Cambiar cuartel</button></td>' : ''}
             </tr>`).join('')}
         </tbody>
       </table>
