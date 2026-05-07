@@ -12,20 +12,6 @@
 
 let _csfTab       = 'generar'
 let _csfDatos     = null
-
-// ── FIRMAS DESDE BASE DE DATOS ──────────────────────────
-let _firmaComisarioCache = {}
-async function _cargarFirmaComisario(cuartelId) {
-  if (!cuartelId) return { nombre:'—', grado:'Carabineros de Chile', cargo:'COMISARIO', firma_b64:null }
-  if (_firmaComisarioCache[cuartelId]) return _firmaComisarioCache[cuartelId]
-  const { data } = await APP.sb.from('config_firmas')
-    .select('nombre,grado,cargo,firma_b64')
-    .eq('cuartel_id', cuartelId).eq('rol', 'comisario').single()
-  const firma = data || { nombre:'—', grado:'Carabineros de Chile', cargo:'COMISARIO', firma_b64:null }
-  _firmaComisarioCache[cuartelId] = firma
-  return firma
-}
-
 let _csfMasivaIdx = 0   // índice cuartel procesando en generación masiva
 
 async function renderCSF() {
@@ -375,7 +361,16 @@ async function generarBorradorCSF() {
     const obsPunto      = (obsRef||[]).filter(o => o.punto_id === p.id)
 
     // Criticidad
-    const nivelExcel = _calcularNivelExcel(personasPunto, incautPunto, [])
+    const nivelesExcel = {
+      trafico_migrantes: nivelDesdeDelito('trafico_migrantes', personasPunto.filter(pr=>pr.tipo_delito==='trafico_migrantes').length),
+      ingreso_adulto:    nivelDesdeDelito('ingreso_adulto',    personasPunto.filter(pr=>pr.situacion_migratoria==='irregular'&&pr.grupo_etario==='adulto').length),
+      ingreso_nna:       nivelDesdeDelito('ingreso_nna',       personasPunto.filter(pr=>pr.situacion_migratoria==='irregular'&&pr.grupo_etario==='nna').length),
+      trafico_drogas:    nivelDesdeDelito('casos',             personasPunto.filter(pr=>pr.tipo_delito==='trafico_drogas').length),
+      contrabando:       nivelDesdeDelito('casos',             incautPunto.filter(i=>['fardos_ropa','cigarrillos','fitozoosanitario'].includes(i.tipo_especie)).length),
+      armas:             nivelDesdeDelito('casos',             personasPunto.filter(pr=>pr.tipo_delito==='ley_17798_armas').length),
+      abigeato:          nivelDesdeDelito('casos',             personasPunto.filter(pr=>pr.tipo_delito==='abigeato').length),
+    }
+    const nivelExcel = Math.max(...Object.values(nivelesExcel), 1)
 
     const nObs              = obsPunto.length
     const tieneHallazgoAlto = obsPunto.some(o => o.nivel_relevancia === 'alto')
@@ -1118,21 +1113,21 @@ async function renderHistorial() {
 
   const _estadoInfo = (estado) => {
     const map = {
-      borrador:    { bg:'#f0f0f2', color:'#555',     label:'BORRADOR' },
-      en_revision: { bg:'#FFF3CD', color:'#856404',  label:'EN REVISIÓN' },
-      aprobada:    { bg:'#e8f0fe', color:'#0055d4',  label:'APROBADA' },
+      borrador:       { bg:'#f0f0f2', color:'#555',     label:'BORRADOR' },
+      en_revision:    { bg:'#FFF3CD', color:'#856404',  label:'EN REVISIÓN' },
+      aprobada:       { bg:'#e8f0fe', color:'#0055d4',  label:'APROBADA' },
       publicada:      { bg:'#e8f5ea', color:'#1A843F',  label:'PUBLICADA' },
-      en_correccion:  { bg:'#FEF3E2', color:'#7B3F00',  label:'EN CORRECCION' },
+      en_correccion:  { bg:'#FEF3E2', color:'#7B3F00',  label:'EN CORRECCIÓN' },
     }
     return map[estado] || { bg:'#f0f0f2', color:'#555', label:(estado||'—').toUpperCase() }
   }
 
   zona.innerHTML = `
     <div class="card" style="padding:0;overflow:hidden">
-      <div style="background:#f5f5f7;padding:.5rem .85rem;font-size:.74rem;font-weight:700;display:flex;justify-content:space-between;align-items:center">
-        <span>Historial de CSF</span>
-        ${(APP.esAdministrador()||APP.esComisario()) ? '<button class="btn btn-sm btn-primario" onclick="modalImprimirTodas()" style="background:#1A843F;border-color:#1A843F;font-size:.7rem">Imprimir todas</button>' : ""}
+      <div style="background:#f5f5f7;padding:.5rem .85rem;font-size:.74rem;font-weight:700">
+        Historial de CSF
       </div>
+      ${(APP.esAdministrador() || APP.esComisario()) ? `<div style="text-align:right;margin-bottom:.5rem"><button class="btn btn-primario btn-sm" onclick="modalImprimirTodas()" style="background:#1A843F;border-color:#1A843F">Imprimir todas</button></div>` : ""}
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:.75rem">
           <thead>
@@ -1149,6 +1144,11 @@ async function renderHistorial() {
           <tbody>
             ${(csfs||[]).map((c,i) => {
               const ei = _estadoInfo(c.estado)
+              const puedePublicar  = (APP.esComisario() || APP.esAdministrador()) && c.estado === 'aprobada'
+              const puedeVolver    = (APP.esComisario() || APP.esAdministrador()) && c.estado === 'en_revision'
+              const puedeCorregir  = (APP.esComisario() || APP.esAdministrador()) && c.estado === 'borrador' && c.numero
+              const enCorreccion   = (APP.esComisario() || APP.esAdministrador()) && c.estado === 'en_correccion'
+              const puedeExcepcion = (APP.esComisario() || APP.esAdministrador() || APP.perfil?.rol === 'validador') && c.estado === 'publicada'
               return `
               <tr style="${i%2===0?'background:#fafafa':''};border-bottom:1px solid var(--border)">
                 <td style="padding:.35rem .6rem;font-weight:700">${c.numero}</td>
@@ -1165,17 +1165,17 @@ async function renderHistorial() {
                     ${ei.label}
                   </span>
                   ${c.firma_nombre ? `<div style="font-size:.6rem;color:var(--muted);margin-top:.15rem">✓ ${c.firma_nombre}</div>` : ''}
+                  ${c.version_correccion > 0 ? `<div style="font-size:.6rem;color:#7B3F00;margin-top:.15rem;cursor:pointer" onclick="verHistorialCorrecciones('${c.id}','${c.numero}')">⚠ Corregida v${c.version_correccion} — ver historial</div>` : ''}
                 </td>
                 <td style="padding:.35rem .6rem;text-align:center">
                   <div style="display:flex;gap:.35rem;justify-content:center;flex-wrap:wrap">
-                    <button class="btn btn-sm btn-secundario" onclick="verCSFCompleta('${c.id}')">Ver</button>
-                    <button class="btn btn-sm" style="background:#f0f9f3;color:#1A843F;border:1px solid #b7dfca" onclick="modalOpcionesImpresion('${c.id}','${c.numero}')">Imprimir</button>
-                    ${c.estado==='aprobada'&&(APP.esComisario()||APP.esAdministrador()) ? `<button class="btn btn-sm btn-primario" onclick="publicarCSFAprobada('${c.id}')">Publicar</button>` : ''}
-                    ${c.estado==='en_revision'&&(APP.esComisario()||APP.esAdministrador()) ? `<button class="btn btn-sm btn-ghost" onclick="despublicarCSF('${c.id}')">Borrador</button>` : ''}
-                    ${c.estado==='borrador'&&c.numero&&(APP.esComisario()||APP.esAdministrador()) ? `<button class="btn btn-sm" style="background:#e8f0fe;color:#0055d4;border:1px solid #90CAF9" onclick="abrirEditorCorreccion('${c.id}','${c.numero}')">Corregir</button>` : ''}
-                    ${c.estado==='publicada'&&(APP.esComisario()||APP.esAdministrador()||APP.perfil?.rol==='validador') ? `<button class="btn btn-sm" style="background:#FEF3E2;color:#7B3F00;border:1px solid #F5CBA7" onclick="solicitarCorreccionCSF('${c.id}','${c.numero}')">Excepcion</button>` : ''}
-                    ${c.estado==='en_correccion'&&(APP.esComisario()||APP.esAdministrador()) ? `<button class="btn btn-sm btn-primario" onclick="abrirEditorCorreccion('${c.id}','${c.numero}')">Editar</button>` : ''}
-                    ${(c.version_correccion||0)>0 ? `<button class="btn btn-sm" style="background:#f5f5f7;font-size:.65rem" onclick="verHistorialCorrecciones('${c.id}','${c.numero}')">v${c.version_correccion}</button>` : ''}
+                    <button class="btn btn-sm btn-secundario" onclick="verCSFCompleta('${c.id}')">👁 Ver</button>
+                    <button class="btn btn-sm" style="background:#f0f9f3;color:#1A843F;border:1px solid #b7dfca" onclick="modalOpcionesImpresion('${c.id}','${c.numero}')">↓ Imprimir</button>
+                    ${puedePublicar  ? `<button class="btn btn-sm btn-primario" onclick="publicarCSFAprobada('${c.id}')">✓ Publicar</button>` : ''}
+                    ${puedeVolver    ? `<button class="btn btn-sm btn-ghost" onclick="despublicarCSF('${c.id}')">↩ Borrador</button>` : ''}
+                    ${puedeCorregir  ? `<button class="btn btn-sm" style="background:#e8f0fe;color:#0055d4;border:1px solid #90CAF9" onclick="abrirEditorCorreccion('${c.id}','${c.numero}')">✎ Corregir</button>` : ''}
+                    ${enCorreccion   ? `<button class="btn btn-sm btn-primario" onclick="abrirEditorCorreccion('${c.id}','${c.numero}')">✎ Editar</button>` : ''}
+                    ${puedeExcepcion ? `<button class="btn btn-sm" style="background:#FEF3E2;color:#7B3F00;border:1px solid #F5CBA7" onclick="solicitarCorreccionCSF('${c.id}','${c.numero}')">⚠ Excepcion</button>` : ''}
                   </div>
                 </td>
               </tr>`
@@ -1251,10 +1251,8 @@ async function renderTabRevision() {
 
 function _htmlTarjetaRevision(csf, esValidador) {
   const nombre = csf.cuartel?.nombre?.replace(' (F)','') || '—'
-  const _borderC = csf.estado==='en_correccion' ? 'var(--rojo)' : 'var(--amarillo)'
-  const _badgeE = csf.estado==='en_correccion' ? `<span style="background:#FEF3E2;color:#7B3F00;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px">EN CORRECCION v${csf.version_correccion||1}</span>` : esValidador ? '<span style="background:#FFF3CD;color:#856404;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px">EN REVISION</span>' : ''
   return `
-  <div class="card" style="border-left:4px solid ${_borderC};padding:1rem">
+  <div class="card" style="border-left:4px solid var(--amarillo);padding:1rem">
     <div style="display:flex;justify-content:space-between;align-items:start;flex-wrap:wrap;gap:.5rem;margin-bottom:.6rem">
       <div>
         <div style="font-size:1rem;font-weight:700">${csf.numero}
@@ -1451,14 +1449,21 @@ function cancelarEdicionHorario(btn, hIni, hFin) {
   }
 }
 
-// ── DATOS FIJOS DEL COMISARIO ──────────────────────────────────
-// Estos datos se imprimen siempre en el pie izquierdo de la CSF
-const CSF_COMISARIO = {
-  nombre:           'NILO A. MORALES RIQUELME',
-  grado:            'Teniente Coronel de Carabineros',
-  cargo:            'COMISARIO',
-  firma_imagen_url: 'data:image/jpeg;base64,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',
+// ── FIRMAS DESDE BASE DE DATOS ────────────────────────────
+// Se carga desde config_firmas en Supabase al renderizar el HTML
+// El comisario configura su firma desde Admin > Firmas
+let _firmaComisarioCache = {}
+
+async function _cargarFirmaComisario(cuartelId) {
+  if (_firmaComisarioCache[cuartelId]) return _firmaComisarioCache[cuartelId]
+  const { data } = await APP.sb.from('config_firmas')
+    .select('nombre,grado,cargo,firma_b64')
+    .eq('cuartel_id', cuartelId).eq('rol', 'comisario').single()
+  const firma = data || { nombre: '—', grado: 'Carabineros de Chile', cargo: 'COMISARIO', firma_b64: null }
+  _firmaComisarioCache[cuartelId] = firma
+  return firma
 }
+
 
 // ── Ver CSF completa en modal (Historial) ─────────────────────
 async function verCSFCompleta(csfId) {
@@ -1615,17 +1620,19 @@ async function _htmlCSFCompleta(csf, visitas, puntosFvc) {
   }).join('')
 
   // ── Sección V: Pie de firma ────────────────────────────────
-  // Comisario: cargado desde config_firmas en BD
-  const _com = await _cargarFirmaComisario(csf.cuartel_id)
-  const bloqueComisario = '<div style="border-right:1px solid #ddd;padding:1rem;text-align:center">'
-    + (_com.firma_b64
-        ? '<img src="' + _com.firma_b64 + '" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>'
-        : '<div style="height:60px"></div>')
-    + '<div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">'
-    + '<div style="font-size:.78rem;font-weight:700">' + _com.nombre + '</div>'
-    + '<div style="font-size:.72rem">' + _com.grado + '</div>'
-    + '<div style="font-size:.72rem;font-weight:700">' + _com.cargo + '</div>'
-    + '</div></div>'
+  // Comisario (lado izquierdo) — cargado desde config_firmas en BD
+  const comisario = await _cargarFirmaComisario(csf.cuartel_id)
+  const bloqueComisario = `
+    <div style="border-right:1px solid #ddd;padding:1rem;text-align:center">
+      ${comisario.firma_b64
+        ? '<img src="' + comisario.firma_b64 + '" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>'
+        : '<div style="height:60px"></div>'}
+      <div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">
+        <div style="font-size:.78rem;font-weight:700">${comisario.nombre}</div>
+        <div style="font-size:.72rem">${comisario.grado}</div>
+        <div style="font-size:.72rem;font-weight:700">${comisario.cargo}</div>
+      </div>
+    </div>`
 
     // Validador (lado derecho) — datos desde BD o pendiente
   const bloqueValidador = csf.firma_nombre ? `
@@ -1898,7 +1905,6 @@ async function confirmarAprobacion(csfId) {
     firma_grado:      grado,
     firma_cargo:      cargo,
     firma_imagen_url: imagenB64,
-    firma_b64:        imagenB64,
   }).eq('id', csfId)
 
   if (error) {
@@ -1951,7 +1957,6 @@ async function confirmarAprobacionMasiva() {
       firma_grado:      grado,
       firma_cargo:      cargo,
       firma_imagen_url: imagenB64,
-      firma_b64:        imagenB64,
     }).eq('id', csf.id)
     if (error) { errores++; console.error('Error aprobando', csf.numero, error) }
     else aprobadas++
@@ -2138,7 +2143,7 @@ function _masivaActualizarBarra(actual, total, barraEl) {
 }
 
 // ── Genera la CSF de un cuartel específico (usado por masiva) ──
-async function _generarCSFParaCuartel(cuartelId, refMes, refAnio, vigMes, vigAnio, clasif) {
+async function _generarCSFParaCuartel(cuartelId, refMes, refAnio, vigMes, vigAnio, clasif, csfIdExistente) {
   const iniRef  = `${refAnio}-${String(refMes).padStart(2,'0')}-01`
   const finRef  = new Date(refAnio, refMes, 0).toISOString().split('T')[0]
   const iniVig  = `${vigAnio}-${String(vigMes).padStart(2,'0')}-01`
@@ -2270,21 +2275,36 @@ async function _generarCSFParaCuartel(cuartelId, refMes, refAnio, vigMes, vigAni
   const nroCsf = await siguienteNroCsf(cuartelId, { mes: vigMes, anio: vigAnio })
   const puntosPorFecha = distribuirVisitasEquilibradas(puntosProcesados, iniVig, finVig)
 
-  const { data: csf, error } = await APP.sb.from('csf_mensual').insert({
-    cuartel_id:            cuartelId,
-    numero:                nroCsf,
-    clasificacion:         clasif,
-    mes_referencia:        refMes,
-    anio_referencia:       refAnio,
-    mes_vigencia:          vigMes,
-    anio_vigencia:         vigAnio,
-    fecha_emision:         hoyISO(),
-    fecha_vigencia_inicio: iniVig,
-    fecha_vigencia_fin:    finVig,
-    amenaza_principal:     amenaza,
-    estado:                'en_revision',
-    enviado_revision_at:   new Date().toISOString(),
-  }).select().single()
+  // Si es una corrección, actualizar la CSF existente en vez de crear una nueva
+  let csf, csfError
+  if (csfIdExistente) {
+    const { data: d, error: e } = await APP.sb.from('csf_mensual').update({
+      amenaza_principal:     amenaza,
+      estado:                'en_revision',
+      enviado_revision_at:   new Date().toISOString(),
+      correccion_autorizada_at:  new Date().toISOString(),
+      correccion_autorizada_por: APP.perfil?.id,
+    }).eq('id', csfIdExistente).select().single()
+    csf = d; csfError = e
+  } else {
+    const { data: d, error: e } = await APP.sb.from('csf_mensual').insert({
+      cuartel_id:            cuartelId,
+      numero:                nroCsf,
+      clasificacion:         clasif,
+      mes_referencia:        refMes,
+      anio_referencia:       refAnio,
+      mes_vigencia:          vigMes,
+      anio_vigencia:         vigAnio,
+      fecha_emision:         hoyISO(),
+      fecha_vigencia_inicio: iniVig,
+      fecha_vigencia_fin:    finVig,
+      amenaza_principal:     amenaza,
+      estado:                'en_revision',
+      enviado_revision_at:   new Date().toISOString(),
+    }).select().single()
+    csf = d; csfError = e
+  }
+  const error = csfError
   if (error) throw error
 
   await APP.sb.from('csf_puntos_fvc').insert(
@@ -2373,44 +2393,402 @@ async function confirmarRechazoCSF(csfId, csfNumero) {
 
 
 // ============================================================
-// CSF v4.0 — NUEVAS FUNCIONES INTEGRADAS
-// M1: Impresion con opciones de firma (Mejora 5)
-// M2: Correccion por excepcion (flujo en_correccion)
-// M3: _calcularNivelExcel compartido (elimina duplicado)
+// CSF v4.1 — FLUJO DE CORRECCIÓN POR EXCEPCIÓN
+// Flujo: publicada → en_correccion → en_revision → aprobada → publicada
+// El número de la CSF no cambia. Se registra historial de cada versión.
 // ============================================================
 
-// ── _calcularNivelExcel: funcion compartida ───────────────────
-function _calcularNivelExcel(personasPunto, incautPunto, hallazgosPunto) {
-  const pp = personasPunto  || []
-  const ip = incautPunto    || []
-  const hp = hallazgosPunto || []
-
-  const niv = (tipo, n) => nivelDesdeDelito(tipo, n)
-
-  const nTrafico  = niv('trafico_migrantes', pp.filter(pr=>pr.tipo_delito==='trafico_migrantes').length)
-  const nTrata    = niv('personas', pp.filter(pr=>pr.tipo_delito==='trata_personas').length)
-  const nIngAdult = niv('ingreso_adulto', pp.filter(pr=>(pr.situacion_migratoria==='irregular'||pr.situacion_migratoria==='ingreso_irregular')&&pr.grupo_etario==='adulto').length)
-  const nIngNNA   = niv('ingreso_nna', pp.filter(pr=>(pr.situacion_migratoria==='irregular'||pr.situacion_migratoria==='ingreso_irregular')&&pr.grupo_etario==='nna').length)
-  const nEgrAdult = niv('personas', pp.filter(pr=>pr.situacion_migratoria==='permanencia_irregular'&&pr.grupo_etario==='adulto').length)
-  const nEgrNNA   = niv('personas', pp.filter(pr=>pr.situacion_migratoria==='permanencia_irregular'&&pr.grupo_etario==='nna').length)
-  const nNNAIrreg = niv('personas', pp.filter(pr=>pr.tipo_resultado==='nna_irregular').length)
-
-  const nDrogas   = niv('casos', pp.filter(pr=>pr.tipo_delito==='trafico_drogas').length)
-  const nArmas    = niv('casos', pp.filter(pr=>pr.tipo_delito==='ley_17798_armas').length)
-  const nAbig     = niv('casos', pp.filter(pr=>pr.tipo_delito==='abigeato').length)
-  const nRecep    = niv('casos', pp.filter(pr=>pr.tipo_delito==='receptacion').length)
-  const nFalsif   = niv('casos', pp.filter(pr=>pr.tipo_delito==='falsificacion_documentos').length)
-  const nCohecho  = niv('casos', pp.filter(pr=>pr.tipo_delito==='cohecho').length)
-  const nContra   = niv('casos', pp.filter(pr=>pr.tipo_delito==='contrabando').length
-    + ip.filter(i=>['fardos_ropa','cigarrillos','fitozoosanitario','fardos_juguetes','dinero'].includes(i.tipo_especie)&&i.con_detenido).length)
-  const nVehicS5  = niv('casos', hp.filter(h=>['vehiculo_encargo','vehiculo_cot','maquinaria'].includes(h.tipo_bien)).length)
-  const nDineroS5 = niv('casos', hp.filter(h=>h.tipo_bien==='dinero').length)
-
-  return Math.max(nTrafico,nTrata,nIngAdult,nIngNNA,nEgrAdult,nEgrNNA,nNNAIrreg,
-    nDrogas,nArmas,nAbig,nRecep,nFalsif,nCohecho,nContra,nVehicS5,nDineroS5,1)
+// ── PASO 1: Solicitar corrección (cualquier rol autorizado) ───
+async function solicitarCorreccionCSF(csfId, numero) {
+  const modal = document.createElement('div')
+  modal.id = 'modal-solicitar-correccion'
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+  modal.innerHTML = `
+    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,520px);overflow:hidden">
+      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;font-size:.95rem">Solicitar corrección — CSF ${numero}</span>
+        <button onclick="el('modal-solicitar-correccion').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:1.1rem">
+        <div style="background:#FEF3E2;border:1.5px solid #F5CBA7;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.78rem;color:#7B3F00;line-height:1.6">
+          <strong>Atención:</strong> Esta acción cambiará la CSF publicada a estado "En corrección".
+          La carta dejará de estar vigente hasta ser aprobada y publicada nuevamente.
+          El número de la CSF se mantiene y quedará registro de esta corrección.
+        </div>
+        <div class="campo" style="margin-bottom:1rem">
+          <label style="font-size:.82rem;font-weight:600">Motivo de la corrección <span style="color:var(--rojo)">*</span></label>
+          <textarea id="correccion-motivo" rows="4" placeholder="Ej: Error en asignación de Hito 12 — corresponde a sector Caquena y no Visviri. Se solicita corrección conforme a instrucción SPF N°..."
+            style="width:100%;font-size:.8rem;padding:.5rem;border:1px solid var(--border);border-radius:6px;resize:vertical;margin-top:.35rem"></textarea>
+        </div>
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:1rem">
+          Se registrará: quién solicitó, fecha/hora, motivo. El SPF verá esta información al aprobar la corrección.
+        </div>
+        <div style="display:flex;gap:.5rem">
+          <button class="btn btn-primario" style="background:#7B3F00;border-color:#7B3F00"
+            onclick="confirmarSolicitudCorreccion('${csfId}')">Confirmar solicitud</button>
+          <button class="btn btn-ghost" onclick="el('modal-solicitar-correccion').remove()">Cancelar</button>
+        </div>
+      </div>
+    </div>`
+  document.body.appendChild(modal)
 }
 
-// ── IMPRESION CON OPCIONES ────────────────────────────────────
+async function confirmarSolicitudCorreccion(csfId) {
+  const motivo = el('correccion-motivo')?.value?.trim()
+  if (!motivo) { toast('Ingresa el motivo de la corrección', 'err'); return }
+
+  const btn = document.querySelector('#modal-solicitar-correccion .btn-primario')
+  if (btn) { btn.disabled = true; btn.textContent = 'Procesando...' }
+
+  // 1. Obtener CSF actual para hacer snapshot
+  const { data: csf } = await APP.sb.from('csf_mensual').select('*').eq('id', csfId).single()
+  if (!csf) { toast('CSF no encontrada', 'err'); return }
+
+  const { data: visitasActuales } = await APP.sb.from('csf_visitas_ordenadas')
+    .select('*').eq('csf_id', csfId).order('fecha_ordenada')
+
+  const { data: puntosActuales } = await APP.sb.from('csf_puntos_fvc')
+    .select('*').eq('csf_id', csfId)
+
+  const nuevaVersion = (csf.version_correccion || 0) + 1
+
+  // 2. Guardar snapshot en historial
+  const { error: errSnap } = await APP.sb.from('csf_correcciones').insert({
+    csf_id:           csfId,
+    version:          nuevaVersion,
+    motivo:           motivo,
+    solicitada_por:   APP.perfil?.id,
+    solicitada_at:    new Date().toISOString(),
+    snapshot_visitas: visitasActuales || [],
+    snapshot_puntos:  puntosActuales  || [],
+  })
+  if (errSnap) { toast('Error al registrar: ' + errSnap.message, 'err'); return }
+
+  // 3. Cambiar estado a en_correccion
+  const { error } = await APP.sb.from('csf_mensual').update({
+    estado:                        'en_correccion',
+    version_correccion:            nuevaVersion,
+    correccion_motivo:             motivo,
+    correccion_solicitada_at:      new Date().toISOString(),
+    correccion_solicitada_por:     APP.perfil?.id,
+  }).eq('id', csfId)
+
+  if (error) { toast('Error: ' + error.message, 'err'); return }
+
+  el('modal-solicitar-correccion')?.remove()
+  toast(`CSF puesta en corrección (v${nuevaVersion}). El comisario puede editarla ahora.`, 'ok')
+  await renderHistorial()
+}
+
+// ── PASO 2: Editor de corrección (Comisario / Admin) ──────────
+async function abrirEditorCorreccion(csfId, numero) {
+  const { data: csf } = await APP.sb.from('csf_mensual').select('*').eq('id', csfId).single()
+  if (!csf) { toast('CSF no encontrada', 'err'); return }
+
+  const modal = document.createElement('div')
+  modal.id = 'modal-editor-correccion'
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+  modal.innerHTML = `
+    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,560px);overflow:hidden">
+      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;font-size:.95rem">Editor de corrección — CSF ${numero} v${csf.version_correccion}</span>
+        <button onclick="el('modal-editor-correccion').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:1.1rem">
+
+        <div style="background:#FEF3E2;border:1px solid #F5CBA7;border-radius:8px;padding:.65rem .85rem;margin-bottom:1rem;font-size:.76rem;color:#7B3F00">
+          <strong>Motivo registrado:</strong> ${csf.correccion_motivo || '—'}
+        </div>
+
+        <div style="font-size:.83rem;font-weight:600;margin-bottom:.75rem">¿Qué deseas corregir?</div>
+
+        <div style="display:flex;flex-direction:column;gap:.65rem;margin-bottom:1.25rem">
+
+          <button class="btn btn-secundario" style="text-align:left;padding:.75rem 1rem;height:auto"
+            onclick="el('modal-editor-correccion').remove(); correccionEditarVisitas('${csfId}','${numero}')">
+            <div style="font-weight:600;font-size:.85rem">📅 Editar días y horarios</div>
+            <div style="font-size:.73rem;color:var(--muted);margin-top:.2rem">
+              Modifica fechas y horarios de visitas ya programadas sin cambiar los puntos
+            </div>
+          </button>
+
+          <button class="btn btn-secundario" style="text-align:left;padding:.75rem 1rem;height:auto"
+            onclick="el('modal-editor-correccion').remove(); correccionRegenerarCompleta('${csfId}','${numero}',${csf.mes_vigencia},${csf.anio_vigencia},${csf.mes_referencia},${csf.anio_referencia},'${csf.clasificacion}')">
+            <div style="font-weight:600;font-size:.85rem">🔄 Regenerar desde cero</div>
+            <div style="font-size:.73rem;color:var(--muted);margin-top:.2rem">
+              Recalcula puntos, criticidad y distribución de visitas completa.
+              Útil para corregir puntos mal asignados o cambios de sector
+            </div>
+          </button>
+
+        </div>
+
+        <div style="border-top:1px solid var(--border);padding-top:.75rem">
+          <div style="font-size:.73rem;color:var(--muted)">
+            Al terminar la corrección, la CSF regresará al ciclo normal:
+            enviar a revisión → aprobación del SPF → publicar
+          </div>
+        </div>
+
+      </div>
+    </div>`
+  document.body.appendChild(modal)
+}
+
+// ── OPCIÓN A: Editar solo visitas (días y horarios) ───────────
+async function correccionEditarVisitas(csfId, numero) {
+  const { data: visitas } = await APP.sb.from('csf_visitas_ordenadas')
+    .select('*,punto:puntos_territoriales(nombre,tipo)')
+    .eq('csf_id', csfId).order('fecha_ordenada')
+
+  const modal = document.createElement('div')
+  modal.id = 'modal-correccion-visitas'
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+  modal.innerHTML = `
+    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,820px);max-height:90vh;display:flex;flex-direction:column">
+      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;font-size:.95rem">Corregir días y horarios — CSF ${numero}</span>
+        <button onclick="el('modal-correccion-visitas').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="padding:.5rem .75rem;background:#FFF3CD;font-size:.75rem;color:#856404;border-bottom:1px solid #F0C040">
+        Edita fecha y/o horario de cada visita. Haz clic en ✎ para editar. Al terminar usa "Enviar a revisión".
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:.5rem">
+        <table style="width:100%;border-collapse:collapse;font-size:.76rem">
+          <thead>
+            <tr style="background:#f0f0f2;position:sticky;top:0">
+              <th style="padding:.35rem .6rem;text-align:center;width:40px">N°</th>
+              <th style="padding:.35rem .6rem;text-align:left">Punto</th>
+              <th style="padding:.35rem .6rem;text-align:center;width:55px">Tipo</th>
+              <th style="padding:.35rem .6rem;text-align:left;width:160px">Fecha</th>
+              <th style="padding:.35rem .6rem;text-align:left;width:85px">Inicio</th>
+              <th style="padding:.35rem .6rem;text-align:left;width:85px">Término</th>
+              <th style="padding:.35rem .6rem;text-align:center;width:65px">Editar</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${(visitas||[]).map((v,i) => `
+            <tr data-visita-id="${v.id}" style="${i%2===0?'background:#fafafa':''};border-bottom:1px solid #eee">
+              <td style="padding:.3rem .6rem;text-align:center;font-weight:700">${String(v.numero_visita).padStart(2,'0')}</td>
+              <td style="padding:.3rem .6rem;font-weight:500">${v.punto?.nombre||'—'}</td>
+              <td style="padding:.3rem .6rem;text-align:center">
+                <span style="font-size:.6rem;font-weight:700;padding:1px 4px;border-radius:3px;
+                  background:${v.punto?.tipo==='hito'?'#e8f0fe':v.punto?.tipo==='pnh'?'#fdecea':'#e8f5ea'};
+                  color:${v.punto?.tipo==='hito'?'#0055d4':v.punto?.tipo==='pnh'?'#C0392B':'#1A843F'}">
+                  ${(v.punto?.tipo||'').toUpperCase()}
+                </span>
+              </td>
+              <td data-campo="fecha" style="padding:.3rem .6rem">${v.fecha_ordenada}</td>
+              <td data-campo="ini"   style="padding:.3rem .6rem;font-weight:500">${v.hora_inicio}</td>
+              <td data-campo="fin"   style="padding:.3rem .6rem;font-weight:500">${v.hora_termino}</td>
+              <td style="padding:.3rem .6rem;text-align:center">
+                <button class="btn btn-sm btn-secundario"
+                  data-vid="${v.id}" data-tipo="${v.punto?.tipo||'pnh'}"
+                  onclick="editarVisitaCorreccion(this)" title="Editar">✎</button>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="padding:.75rem 1rem;border-top:1px solid var(--border);display:flex;gap:.5rem;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="el('modal-correccion-visitas').remove()">Cancelar</button>
+        <button class="btn btn-primario" onclick="enviarCorreccionARevision('${csfId}')">
+          → Enviar a revisión del SPF
+        </button>
+      </div>
+    </div>`
+  document.body.appendChild(modal)
+}
+
+function editarVisitaCorreccion(btn) {
+  const visitaId  = btn.dataset.vid
+  const tipoPunto = btn.dataset.tipo
+  const fila      = btn.closest('tr[data-visita-id]')
+  if (!fila) return
+
+  const fechaEl = fila.querySelector('td[data-campo="fecha"]')
+  const iniEl   = fila.querySelector('td[data-campo="ini"]')
+  const finEl   = fila.querySelector('td[data-campo="fin"]')
+
+  const fechaActual = fechaEl?.textContent?.trim()
+  const hIniActual  = iniEl?.textContent?.trim()
+  const hFinActual  = finEl?.textContent?.trim()
+
+  fila.style.background = '#FFF9E6'
+
+  if (fechaEl) fechaEl.innerHTML = `<input type="date" class="edit-fecha"
+    value="${fechaActual}"
+    style="width:135px;font-size:.75rem;padding:.2rem .3rem;border:1px solid var(--amarillo);border-radius:4px"/>`
+
+  if (iniEl) iniEl.innerHTML = `<input type="time" class="edit-hora-ini"
+    value="${hIniActual}"
+    style="width:80px;font-size:.75rem;padding:.2rem .3rem;border:1px solid var(--amarillo);border-radius:4px"/>`
+
+  if (finEl) finEl.innerHTML = `<input type="time" class="edit-hora-fin"
+    value="${hFinActual}"
+    style="width:80px;font-size:.75rem;padding:.2rem .3rem;border:1px solid var(--amarillo);border-radius:4px"/>`
+
+  const tdBtn = btn.closest('td')
+  if (tdBtn) {
+    tdBtn.innerHTML = `
+      <button class="btn btn-sm btn-primario" style="padding:.2rem .4rem"
+        onclick="guardarVisitaCorreccion(this,'${visitaId}','${fechaActual}','${hIniActual}','${hFinActual}')">✓</button>
+      <button class="btn btn-sm btn-ghost" style="padding:.2rem .3rem;margin-left:.2rem"
+        onclick="cancelarEdicionCorreccion(this,'${fechaActual}','${hIniActual}','${hFinActual}')">✕</button>`
+  }
+}
+
+async function guardarVisitaCorreccion(btn, visitaId, fechaOrig, hIniOrig, hFinOrig) {
+  const fila   = btn.closest('tr[data-visita-id]')
+  const fecha  = fila?.querySelector('.edit-fecha')?.value
+  const hIni   = fila?.querySelector('.edit-hora-ini')?.value
+  const hFin   = fila?.querySelector('.edit-hora-fin')?.value
+  if (!fecha || !hIni || !hFin) return
+
+  const { error } = await APP.sb.from('csf_visitas_ordenadas').update({
+    fecha_ordenada: fecha,
+    hora_inicio:    hIni,
+    hora_termino:   hFin,
+  }).eq('id', visitaId)
+
+  if (error) { toast('Error: ' + error.message, 'err'); return }
+
+  const fechaEl = fila.querySelector('td[data-campo="fecha"]')
+  const iniEl   = fila.querySelector('td[data-campo="ini"]')
+  const finEl   = fila.querySelector('td[data-campo="fin"]')
+  if (fechaEl) fechaEl.textContent = fecha
+  if (iniEl)   iniEl.innerHTML     = `<span style="font-weight:500">${hIni}</span>`
+  if (finEl)   finEl.innerHTML     = `<span style="font-weight:500">${hFin}</span>`
+
+  fila.style.background = '#E8F5EA'
+  setTimeout(() => fila.style.background = '', 1200)
+
+  const tdBtn = btn.closest('td')
+  if (tdBtn) tdBtn.innerHTML = `<button class="btn btn-sm btn-secundario"
+    data-vid="${visitaId}" data-tipo="pnh"
+    onclick="editarVisitaCorreccion(this)" title="Editar">✎</button>`
+
+  toast('Visita actualizada', 'ok')
+}
+
+function cancelarEdicionCorreccion(btn, fecha, hIni, hFin) {
+  const fila = btn.closest('tr[data-visita-id]')
+  if (!fila) return
+  const fechaEl = fila.querySelector('td[data-campo="fecha"]')
+  const iniEl   = fila.querySelector('td[data-campo="ini"]')
+  const finEl   = fila.querySelector('td[data-campo="fin"]')
+  if (fechaEl) fechaEl.textContent = fecha
+  if (iniEl)   iniEl.textContent   = hIni
+  if (finEl)   finEl.textContent   = hFin
+  fila.style.background = ''
+  const tdBtn = btn.closest('td')
+  const vid = fila.dataset.visitaId
+  if (tdBtn && vid) tdBtn.innerHTML = `<button class="btn btn-sm btn-secundario"
+    data-vid="${vid}" data-tipo="pnh"
+    onclick="editarVisitaCorreccion(this)" title="Editar">✎</button>`
+}
+
+// ── OPCIÓN B: Regenerar CSF desde cero manteniendo el número ──
+async function correccionRegenerarCompleta(csfId, numero, vigMes, vigAnio, refMes, refAnio, clasif) {
+  if (!confirm(`¿Regenerar completamente la CSF ${numero}? Se recalcularán todos los puntos y visitas.
+El número de la CSF se mantiene.`)) return
+
+  const zona = el('csf-contenido')
+  if (zona) {
+    zona.innerHTML = '<div class="cargando">Regenerando CSF...</div>'
+    await cambiarTabCSF('historial')
+  }
+
+  // FIX: usar el cuartel_id de la CSF misma, NO el cuartel activo del selector
+  // Esto evita que una CSF de Visviri se regenere con datos de Chacalluta
+  const { data: csfData } = await APP.sb.from('csf_mensual')
+    .select('cuartel_id').eq('id', csfId).single()
+  const cuartelId = csfData?.cuartel_id
+  if (!cuartelId) { toast('No se pudo obtener el cuartel de la CSF', 'err'); return }
+
+  // Borrar visitas y puntos actuales
+  await APP.sb.from('csf_visitas_ordenadas').delete().eq('csf_id', csfId)
+  await APP.sb.from('csf_puntos_fvc').delete().eq('csf_id', csfId)
+
+  // Regenerar con los mismos parámetros y el cuartel correcto
+  const ok = await _generarCSFParaCuartel(cuartelId, refMes, refAnio, vigMes, vigAnio, clasif, csfId)
+
+  if (ok) {
+    toast('CSF regenerada correctamente para ' + numero, 'ok')
+  } else {
+    toast('Error al regenerar la CSF', 'err')
+  }
+  await renderHistorial()
+}
+
+// ── PASO 3: Enviar corrección a revisión del SPF ──────────────
+async function enviarCorreccionARevision(csfId) {
+  if (!confirm('¿Enviar la CSF corregida a revisión del SPF?')) return
+
+  const { error } = await APP.sb.from('csf_mensual').update({
+    estado:                    'en_revision',
+    enviado_revision_at:       new Date().toISOString(),
+    correccion_autorizada_at:  null,
+    correccion_autorizada_por: null,
+  }).eq('id', csfId)
+
+  if (error) { toast('Error: ' + error.message, 'err'); return }
+
+  el('modal-correccion-visitas')?.remove()
+  toast('CSF enviada a revisión del SPF. Flujo normal retomado.', 'ok')
+  await renderHistorial()
+}
+
+// ── Ver historial de correcciones de una CSF ──────────────────
+async function verHistorialCorrecciones(csfId, numero) {
+  const { data: correcciones } = await APP.sb.from('csf_correcciones')
+    .select('*').eq('csf_id', csfId).order('version')
+
+  if (!correcciones?.length) {
+    toast('Esta CSF no tiene correcciones registradas', 'info')
+    return
+  }
+
+  const modal = document.createElement('div')
+  modal.id = 'modal-historial-correcciones'
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
+  modal.innerHTML = `
+    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,620px);max-height:88vh;display:flex;flex-direction:column">
+      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+        <span style="font-weight:700;font-size:.95rem">Historial de correcciones — CSF ${numero}</span>
+        <button onclick="el('modal-historial-correcciones').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">✕</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.85rem">
+        ${correcciones.map(c => `
+          <div style="border:1px solid var(--border);border-left:4px solid #F5CBA7;border-radius:8px;padding:.75rem .9rem">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
+              <span style="background:#FEF3E2;color:#7B3F00;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px">
+                CORRECCIÓN v${c.version}
+              </span>
+              <span style="font-size:.72rem;color:var(--muted)">${c.solicitada_at ? new Date(c.solicitada_at).toLocaleString('es-CL') : '—'}</span>
+            </div>
+            <div style="font-size:.8rem;font-weight:600;margin-bottom:.3rem">Motivo:</div>
+            <div style="font-size:.78rem;color:var(--text);background:var(--bg-alt,#f5f5f5);padding:.5rem .65rem;border-radius:6px;line-height:1.5">
+              ${c.motivo || '—'}
+            </div>
+            ${c.autorizada_at ? `
+            <div style="font-size:.72rem;color:var(--muted);margin-top:.4rem">
+              Autorizada: ${new Date(c.autorizada_at).toLocaleString('es-CL')}
+            </div>` : `
+            <div style="font-size:.72rem;color:var(--amarillo);margin-top:.4rem">Pendiente de autorización</div>`}
+          </div>`).join('')}
+      </div>
+      <div style="padding:.75rem 1rem;border-top:1px solid var(--border);text-align:right">
+        <button class="btn btn-secundario" onclick="el('modal-historial-correcciones').remove()">Cerrar</button>
+      </div>
+    </div>`
+  document.body.appendChild(modal)
+}
+
+// ============================================================
+// CSF v4.2 — MEJORA 5: Impresion con opciones de firma
+// ============================================================
+
 function modalOpcionesImpresion(csfId, numero) {
   const modal = document.createElement('div')
   modal.id = 'modal-opc-imp'
@@ -2430,12 +2808,12 @@ function modalOpcionesImpresion(csfId, numero) {
         <button class="btn btn-secundario" style="text-align:left;padding:.7rem .9rem;height:auto"
           onclick="el('modal-opc-imp').remove();imprimirCSF('${csfId}','fisica')">
           <div style="font-weight:600;font-size:.84rem">Para firma fisica</div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.15rem">Espacio en blanco sobre la linea, para firmar a mano</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.15rem">Espacio en blanco sobre la linea — para firmar a mano</div>
         </button>
         <button class="btn btn-secundario" style="text-align:left;padding:.7rem .9rem;height:auto"
           onclick="el('modal-opc-imp').remove();imprimirCSF('${csfId}','solo_pie')">
           <div style="font-weight:600;font-size:.84rem">Solo pie de firma</div>
-          <div style="font-size:.72rem;color:var(--muted);margin-top:.15rem">Una hoja solo con los bloques de firma</div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.15rem">Una hoja solo con los bloques de firma — para annexar</div>
         </button>
       </div>
     </div>`
@@ -2443,7 +2821,8 @@ function modalOpcionesImpresion(csfId, numero) {
 }
 
 async function modalImprimirTodas() {
-  const { data: cuarteles } = await APP.sb.from('cuarteles').select('id,nombre').eq('activo',true).order('nombre')
+  let q = APP.sb.from('cuarteles').select('id,nombre').eq('activo', true).order('nombre')
+  const { data: cuarteles } = await q
   const modal = document.createElement('div')
   modal.id = 'modal-imp-todas'
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
@@ -2454,11 +2833,12 @@ async function modalImprimirTodas() {
         <button onclick="el('modal-imp-todas').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">X</button>
       </div>
       <div style="padding:1rem">
-        ${APP.esAdministrador() ? `<div class="campo" style="margin-bottom:.75rem">
+        ${APP.esAdministrador() ? `
+        <div class="campo" style="margin-bottom:.75rem">
           <label>Cuartel</label>
           <select id="imp-cuartel" style="width:100%">
             <option value="">Todos los cuarteles</option>
-            ${(cuarteles||[]).map(c=>'<option value="'+c.id+'">'+c.nombre.replace(' (F)','')+'</option>').join('')}
+            ${(cuarteles||[]).map(c => '<option value="' + c.id + '">' + c.nombre.replace(' (F)','') + '</option>').join('')}
           </select>
         </div>` : ''}
         <div class="campo" style="margin-bottom:.75rem">
@@ -2472,13 +2852,20 @@ async function modalImprimirTodas() {
         <div class="campo" style="margin-bottom:1rem">
           <label>Tipo de impresion</label>
           <div style="display:flex;flex-direction:column;gap:.35rem;margin-top:.3rem">
-            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer"><input type="radio" name="imp-tipo-t" value="completa" checked/> Con firma digital</label>
-            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer"><input type="radio" name="imp-tipo-t" value="fisica"/> Para firma fisica</label>
-            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer"><input type="radio" name="imp-tipo-t" value="solo_pie"/> Solo pies de firma</label>
+            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer">
+              <input type="radio" name="imp-tipo-t" value="completa" checked/> Con firma digital
+            </label>
+            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer">
+              <input type="radio" name="imp-tipo-t" value="fisica"/> Para firma fisica
+            </label>
+            <label style="display:flex;align-items:center;gap:.45rem;font-size:.81rem;font-weight:400;cursor:pointer">
+              <input type="radio" name="imp-tipo-t" value="solo_pie"/> Solo pies de firma
+            </label>
           </div>
         </div>
         <div style="display:flex;gap:.5rem">
-          <button class="btn btn-primario" id="btn-gen-imp" style="background:#1A843F;border-color:#1A843F" onclick="ejecutarImpresionTodas()">Generar</button>
+          <button class="btn btn-primario" id="btn-gen-imp" style="background:#1A843F;border-color:#1A843F"
+            onclick="ejecutarImpresionTodas()">Generar</button>
           <button class="btn btn-ghost" onclick="el('modal-imp-todas').remove()">Cancelar</button>
         </div>
       </div>
@@ -2491,228 +2878,106 @@ async function ejecutarImpresionTodas() {
   const estadoFilt  = el('imp-estado')?.value  || 'publicada'
   const tipo        = document.querySelector('input[name="imp-tipo-t"]:checked')?.value || 'completa'
   const btn         = el('btn-gen-imp')
-  if (btn) { btn.disabled=true; btn.textContent='Generando...' }
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando...' }
   try {
-    let q = APP.sb.from('csf_mensual').select('*,cuartel:cuarteles(nombre,id)').order('cuartel_id').order('numero')
+    let q = APP.sb.from('csf_mensual')
+      .select('*,cuartel:cuarteles(nombre,id)')
+      .order('cuartel_id').order('numero')
     if (estadoFilt !== 'todos') q = q.eq('estado', estadoFilt)
     if (cuartelFilt)             q = q.eq('cuartel_id', cuartelFilt)
     else if (!APP.esAdministrador()) q = q.eq('cuartel_id', APP.cuartelActivo()?.id)
     const { data: csfs } = await q
     if (!csfs?.length) { toast('No hay CSF con ese filtro', 'warn'); return }
-    const csfIds = csfs.map(c=>c.id)
-    const [{ data: todasVisitas },{ data: todosPuntos }] = await Promise.all([
-      APP.sb.from('csf_visitas_ordenadas').select('*,punto:puntos_territoriales(nombre,tipo,latitud,longitud)').in('csf_id',csfIds).order('fecha_ordenada'),
-      APP.sb.from('csf_puntos_fvc').select('*,punto:puntos_territoriales(nombre,tipo,fvc_base)').in('csf_id',csfIds).order('nivel_final',{ascending:false}),
+    const csfIds = csfs.map(c => c.id)
+    const [{ data: todasVisitas }, { data: todosPuntos }] = await Promise.all([
+      APP.sb.from('csf_visitas_ordenadas').select('*,punto:puntos_territoriales(nombre,tipo,latitud,longitud)').in('csf_id', csfIds).order('fecha_ordenada'),
+      APP.sb.from('csf_puntos_fvc').select('*,punto:puntos_territoriales(nombre,tipo,fvc_base)').in('csf_id', csfIds).order('nivel_final', { ascending: false }),
     ])
     let htmlCompleto = ''
     for (const csf of csfs) {
-      const visitas   = (todasVisitas||[]).filter(v=>v.csf_id===csf.id)
-      const puntosFvc = (todosPuntos||[]).filter(p=>p.csf_id===csf.id)
+      const visitas   = (todasVisitas||[]).filter(v => v.csf_id === csf.id)
+      const puntosFvc = (todosPuntos||[]).filter(p => p.csf_id === csf.id)
       const html      = await _htmlCSFParaImpresion(csf, visitas, puntosFvc, tipo)
-      htmlCompleto   += '<div style="page-break-after:always">'+html+'</div>'
+      htmlCompleto   += '<div style="page-break-after:always">' + html + '</div>'
     }
     el('modal-imp-todas')?.remove()
-    _abrirVentanaImpresion(htmlCompleto, 'CSF '+csfs.length+' cartas')
-  } catch(e) { toast('Error: '+e.message,'err') }
-  finally { if (btn){btn.disabled=false;btn.textContent='Generar'} }
+    _abrirVentanaImpresion(htmlCompleto, 'CSF ' + csfs.length + ' cartas')
+  } catch(e) {
+    toast('Error: ' + e.message, 'err')
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Generar' }
+  }
 }
 
 async function imprimirCSF(csfId, tipo) {
-  const { data: csf } = await APP.sb.from('csf_mensual').select('*,cuartel:cuarteles(nombre)').eq('id',csfId).single()
-  const { data: visitas } = await APP.sb.from('csf_visitas_ordenadas').select('*,punto:puntos_territoriales(nombre,tipo,latitud,longitud)').eq('csf_id',csfId).order('fecha_ordenada')
-  const { data: puntosFvc } = await APP.sb.from('csf_puntos_fvc').select('*,punto:puntos_territoriales(nombre,tipo,fvc_base)').eq('csf_id',csfId).order('nivel_final',{ascending:false})
+  const { data: csf } = await APP.sb.from('csf_mensual').select('*,cuartel:cuarteles(nombre)').eq('id', csfId).single()
+  const { data: visitas } = await APP.sb.from('csf_visitas_ordenadas').select('*,punto:puntos_territoriales(nombre,tipo,latitud,longitud)').eq('csf_id', csfId).order('fecha_ordenada')
+  const { data: puntosFvc } = await APP.sb.from('csf_puntos_fvc').select('*,punto:puntos_territoriales(nombre,tipo,fvc_base)').eq('csf_id', csfId).order('nivel_final', { ascending: false })
   const html = await _htmlCSFParaImpresion(csf, visitas||[], puntosFvc||[], tipo)
-  _abrirVentanaImpresion(html, csf?.numero||'CSF')
+  _abrirVentanaImpresion(html, csf?.numero || 'CSF')
 }
 
 async function _htmlCSFParaImpresion(csf, visitas, puntosFvc, tipo) {
-  if (tipo === 'solo_pie') {
-    const com = await _cargarFirmaComisario(csf.cuartel_id)
-    return _htmlSoloPieFirma(csf, com)
-  }
-  const htmlBase = await _htmlCSFCompleta(csf, visitas, puntosFvc)
-  const comisario = await _cargarFirmaComisario(csf.cuartel_id)
-  const imgCom = tipo==='fisica' ? '<div style="height:60px"></div>'
-    : (comisario.firma_b64 ? '<img src="'+comisario.firma_b64+'" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>' : '<div style="height:60px"></div>')
-  const imgVal = tipo==='fisica' ? '<div style="height:60px"></div>'
-    : ((csf.firma_imagen_url||csf.firma_b64) ? '<img src="'+(csf.firma_imagen_url||csf.firma_b64)+'" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>' : '<div style="height:60px"></div>')
-  const pieNuevo = '<div id="csf-bloque-firmas" style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ddd;min-height:100px">'
-    + '<div style="border-right:1px solid #ddd;padding:1rem;text-align:center">'+imgCom
-    + '<div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">'
-    + '<div style="font-size:.78rem;font-weight:700">'+comisario.nombre+'</div>'
-    + '<div style="font-size:.72rem">'+comisario.grado+'</div>'
-    + '<div style="font-size:.72rem;font-weight:700">'+comisario.cargo+'</div>'
-    + '</div></div>'
-    + '<div style="padding:1rem;text-align:center">'+imgVal
-    + '<div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">'
-    + '<div style="font-size:.78rem;font-weight:700">'+(csf.firma_nombre||'SUBPREFECTO FRONTERIZO')+'</div>'
-    + '<div style="font-size:.72rem">'+(csf.firma_grado||'')+'</div>'
-    + '<div style="font-size:.72rem;font-weight:700">'+(csf.firma_cargo||'SUBPREFECTO FRONTERIZO')+'</div>'
-    + '</div></div></div>'
-  const marcador = '<div id="csf-bloque-firmas"'
+  if (tipo === 'solo_pie') return _htmlSoloPieFirma(csf, await _cargarFirmaComisario(csf.cuartel_id))
+  const htmlBase  = await _htmlCSFCompleta(csf, visitas, puntosFvc)
+  const htmlFirma = await _htmlBloquesFirma(csf, tipo)
+  const marcador  = '<div id="csf-bloque-firmas"'
   const ini = htmlBase.indexOf(marcador)
   if (ini > 0) {
-    const fin = htmlBase.lastIndexOf('</div>', htmlBase.length) 
-    return htmlBase.substring(0, ini) + pieNuevo
+    const fin = htmlBase.indexOf('</div>', ini + marcador.length)
+    return htmlBase.substring(0, ini) + htmlFirma + htmlBase.substring(fin + 6)
   }
-  return htmlBase.replace('${bloqueComisario}','').replace('${bloqueValidador}','') + pieNuevo
+  return htmlBase
+}
+
+async function _htmlBloquesFirma(csf, tipo) {
+  const com = await _cargarFirmaComisario(csf.cuartel_id)
+  const imgCom = tipo === 'fisica' ? '<div style="height:60px"></div>'
+    : (com.firma_b64 ? '<img src="' + com.firma_b64 + '" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>' : '<div style="height:60px"></div>')
+  const imgVal = tipo === 'fisica' ? '<div style="height:60px"></div>'
+    : ((csf.firma_imagen_url || csf.firma_b64) ? '<img src="' + (csf.firma_imagen_url || csf.firma_b64) + '" style="height:60px;max-width:200px;object-fit:contain;display:block;margin:0 auto .4rem"/>' : '<div style="height:60px"></div>')
+  return '<div id="csf-bloque-firmas" style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ddd;min-height:100px">'
+    + '<div style="border-right:1px solid #ddd;padding:1rem;text-align:center">' + imgCom
+    + '<div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">'
+    + '<div style="font-size:.78rem;font-weight:700">' + com.nombre + '</div>'
+    + '<div style="font-size:.72rem">' + com.grado + '</div>'
+    + '<div style="font-size:.72rem;font-weight:700">' + com.cargo + '</div>'
+    + '</div></div>'
+    + '<div style="padding:1rem;text-align:center">' + imgVal
+    + '<div style="border-top:2px solid #000;padding-top:.35rem;margin-top:.25rem">'
+    + '<div style="font-size:.78rem;font-weight:700">' + (csf.firma_nombre || 'SUBPREFECTO FRONTERIZO') + '</div>'
+    + '<div style="font-size:.72rem">' + (csf.firma_grado || '') + '</div>'
+    + '<div style="font-size:.72rem;font-weight:700">' + (csf.firma_cargo || 'SUBPREFECTO FRONTERIZO') + '</div>'
+    + '</div></div></div>'
 }
 
 function _htmlSoloPieFirma(csf, com) {
-  const imgCom = com?.firma_b64 ? '<img src="'+com.firma_b64+'" style="height:65px;max-width:200px;object-fit:contain;display:block;margin:0 auto .5rem"/>' : '<div style="height:65px"></div>'
-  const imgVal = (csf.firma_imagen_url||csf.firma_b64) ? '<img src="'+(csf.firma_imagen_url||csf.firma_b64)+'" style="height:65px;max-width:200px;object-fit:contain;display:block;margin:0 auto .5rem"/>' : '<div style="height:65px"></div>'
+  const imgCom = com?.firma_b64 ? '<img src="' + com.firma_b64 + '" style="height:65px;max-width:200px;object-fit:contain;display:block;margin:0 auto .5rem"/>' : '<div style="height:65px"></div>'
+  const imgVal = (csf.firma_imagen_url || csf.firma_b64) ? '<img src="' + (csf.firma_imagen_url || csf.firma_b64) + '" style="height:65px;max-width:200px;object-fit:contain;display:block;margin:0 auto .5rem"/>' : '<div style="height:65px"></div>'
   return '<div style="padding:2rem;font-family:Arial,sans-serif">'
-    +'<div style="text-align:center;margin-bottom:1.5rem;font-size:11px;color:#666">'+(csf.numero||'')+'&nbsp;&mdash;&nbsp;'+(csf.cuartel?.nombre||'')+'</div>'
-    +'<div style="background:#1A843F;color:#fff;padding:.4rem .85rem;font-size:.74rem;font-weight:700">V. FIRMAS Y VALIDACION</div>'
-    +'<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ddd;min-height:120px">'
-    +'<div style="border-right:1px solid #ddd;padding:1.5rem;text-align:center">'+imgCom
-    +'<div style="border-top:2px solid #000;padding-top:.4rem;margin-top:.3rem">'
-    +'<div style="font-size:11px;font-weight:700">'+(com?.nombre||'')+'</div>'
-    +'<div style="font-size:10px">'+(com?.grado||'')+'</div>'
-    +'<div style="font-size:10px;font-weight:700">'+(com?.cargo||'COMISARIO')+'</div>'
-    +'</div></div>'
-    +'<div style="padding:1.5rem;text-align:center">'+imgVal
-    +'<div style="border-top:2px solid #000;padding-top:.4rem;margin-top:.3rem">'
-    +'<div style="font-size:11px;font-weight:700">'+(csf.firma_nombre||'SUBPREFECTO FRONTERIZO')+'</div>'
-    +'<div style="font-size:10px">'+(csf.firma_grado||'')+'</div>'
-    +'<div style="font-size:10px;font-weight:700">'+(csf.firma_cargo||'SUBPREFECTO FRONTERIZO')+'</div>'
-    +'</div></div></div></div>'
+    + '<div style="text-align:center;margin-bottom:1.5rem;font-size:11px;color:#666">'
+    + (csf.numero||'') + ' — ' + (csf.cuartel?.nombre||'') + ' — Vigencia: ' + (csf.fecha_vigencia_inicio||'') + ' al ' + (csf.fecha_vigencia_fin||'')
+    + '</div>'
+    + '<div style="background:#1A843F;color:#fff;padding:.4rem .85rem;font-size:.74rem;font-weight:700">V. FIRMAS Y VALIDACION</div>'
+    + '<div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ddd;min-height:120px">'
+    + '<div style="border-right:1px solid #ddd;padding:1.5rem;text-align:center">' + imgCom
+    + '<div style="border-top:2px solid #000;padding-top:.4rem;margin-top:.3rem">'
+    + '<div style="font-size:11px;font-weight:700">' + (com?.nombre||'—') + '</div>'
+    + '<div style="font-size:10px">' + (com?.grado||'') + '</div>'
+    + '<div style="font-size:10px;font-weight:700">' + (com?.cargo||'COMISARIO') + '</div>'
+    + '</div></div>'
+    + '<div style="padding:1.5rem;text-align:center">' + imgVal
+    + '<div style="border-top:2px solid #000;padding-top:.4rem;margin-top:.3rem">'
+    + '<div style="font-size:11px;font-weight:700">' + (csf.firma_nombre||'SUBPREFECTO FRONTERIZO') + '</div>'
+    + '<div style="font-size:10px">' + (csf.firma_grado||'') + '</div>'
+    + '<div style="font-size:10px;font-weight:700">' + (csf.firma_cargo||'SUBPREFECTO FRONTERIZO') + '</div>'
+    + '</div></div></div></div>'
 }
 
 function _abrirVentanaImpresion(html, titulo) {
-  const win = window.open('','_blank','width=960,height=800')
-  win.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>'+titulo+'</title><style>* { box-sizing:border-box; margin:0; padding:0; } body { font-family:Arial,sans-serif; font-size:11px; color:#000; background:#fff; } table { width:100%; border-collapse:collapse; } th, td { padding:3px 5px; border:1px solid #ccc; } .verde-header { background:#04742C !important; color:#fff !important; } .verde-sub { background:#1A843F !important; color:#fff !important; } .meta-band { background:#CCE3D3 !important; } .alerta-band { background:#FFF3CD !important; border-bottom:1px solid #F0C040; } @page { size:A4; margin:15mm 12mm; } @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }</style></head><body>'+html+'</body></html>')
+  const win = window.open('', '_blank', 'width=960,height=800')
+  win.document.write('<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"/><title>' + titulo + '</title><style>* { box-sizing:border-box; margin:0; padding:0; } body { font-family:Arial,sans-serif; font-size:11px; color:#000; background:#fff; } table { width:100%; border-collapse:collapse; } th, td { padding:3px 5px; border:1px solid #ccc; } .verde-header { background:#04742C !important; color:#fff !important; } .verde-sub { background:#1A843F !important; color:#fff !important; } .meta-band { background:#CCE3D3 !important; } .alerta-band { background:#FFF3CD !important; border-bottom:1px solid #F0C040; } @page { size:A4; margin:15mm 12mm; } @media print { body { -webkit-print-color-adjust:exact; print-color-adjust:exact; } }</style></head><body>' + html + '</body></html>')
   win.document.close()
   win.focus()
-  setTimeout(()=>{win.print();win.close()},700)
-}
-
-// ── FLUJO CORRECCION POR EXCEPCION ────────────────────────────
-async function solicitarCorreccionCSF(csfId, numero) {
-  const modal = document.createElement('div')
-  modal.id = 'modal-sol-corr'
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
-  modal.innerHTML = `
-    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,520px);overflow:hidden">
-      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-weight:700;font-size:.95rem">Solicitar correccion — CSF ${numero}</span>
-        <button onclick="el('modal-sol-corr').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">X</button>
-      </div>
-      <div style="padding:1.1rem">
-        <div style="background:#FEF3E2;border:1.5px solid #F5CBA7;border-radius:8px;padding:.75rem;margin-bottom:1rem;font-size:.78rem;color:#7B3F00;line-height:1.6">
-          <strong>Atencion:</strong> Esta CSF dejara de estar vigente mientras se corrige. El numero de la CSF se mantiene y quedara registro de esta correccion.
-        </div>
-        <div class="campo" style="margin-bottom:1rem">
-          <label>Motivo de la correccion *</label>
-          <textarea id="corr-motivo" rows="4" placeholder="Ej: Error en asignacion de Hito 12..."
-            style="width:100%;font-size:.8rem;padding:.5rem;border:1px solid var(--border);border-radius:6px;resize:vertical;margin-top:.35rem"></textarea>
-        </div>
-        <div style="display:flex;gap:.5rem">
-          <button class="btn btn-primario" style="background:#7B3F00;border-color:#7B3F00" onclick="confirmarSolicitudCorreccion('${csfId}')">Confirmar solicitud</button>
-          <button class="btn btn-ghost" onclick="el('modal-sol-corr').remove()">Cancelar</button>
-        </div>
-      </div>
-    </div>`
-  document.body.appendChild(modal)
-}
-
-async function confirmarSolicitudCorreccion(csfId) {
-  const motivo = el('corr-motivo')?.value?.trim()
-  if (!motivo) { toast('Ingresa el motivo', 'err'); return }
-  const btn = document.querySelector('#modal-sol-corr .btn-primario')
-  if (btn) { btn.disabled=true; btn.textContent='Procesando...' }
-  const { data: csf } = await APP.sb.from('csf_mensual').select('*').eq('id',csfId).single()
-  if (!csf) { toast('CSF no encontrada','err'); return }
-  const { data: va } = await APP.sb.from('csf_visitas_ordenadas').select('*').eq('csf_id',csfId)
-  const { data: pa } = await APP.sb.from('csf_puntos_fvc').select('*').eq('csf_id',csfId)
-  const nuevaVer = (csf.version_correccion||0) + 1
-  await APP.sb.from('csf_correcciones').insert({
-    csf_id: csfId, version: nuevaVer, motivo,
-    solicitada_por: APP.perfil?.id, solicitada_at: new Date().toISOString(),
-    snapshot_visitas: va||[], snapshot_puntos: pa||[],
-  })
-  await APP.sb.from('csf_mensual').update({
-    estado:'en_correccion', version_correccion:nuevaVer,
-    correccion_motivo:motivo, correccion_solicitada_at:new Date().toISOString(),
-    correccion_solicitada_por:APP.perfil?.id,
-  }).eq('id',csfId)
-  el('modal-sol-corr')?.remove()
-  toast('CSF puesta en correccion v'+nuevaVer+'. El comisario puede editarla.','ok')
-  await renderHistorial()
-}
-
-async function abrirEditorCorreccion(csfId, numero) {
-  const { data: csf } = await APP.sb.from('csf_mensual').select('*').eq('id',csfId).single()
-  if (!csf) { toast('CSF no encontrada','err'); return }
-  const modal = document.createElement('div')
-  modal.id = 'modal-ed-corr'
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
-  modal.innerHTML = `
-    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,540px);overflow:hidden">
-      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-weight:700;font-size:.95rem">Editor de correccion — ${numero}</span>
-        <button onclick="el('modal-ed-corr').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">X</button>
-      </div>
-      <div style="padding:1.1rem">
-        ${csf.correccion_motivo ? '<div style="background:#FEF3E2;border:1px solid #F5CBA7;border-radius:8px;padding:.65rem .85rem;margin-bottom:1rem;font-size:.76rem;color:#7B3F00"><strong>Motivo:</strong> '+csf.correccion_motivo+'</div>' : ''}
-        <div style="font-size:.83rem;font-weight:600;margin-bottom:.75rem">Que deseas corregir?</div>
-        <div style="display:flex;flex-direction:column;gap:.65rem;margin-bottom:1.25rem">
-          <button class="btn btn-secundario" style="text-align:left;padding:.75rem 1rem;height:auto"
-            onclick="el('modal-ed-corr').remove();verHorariosCSF('${csfId}')">
-            <div style="font-weight:600;font-size:.85rem">Editar dias y horarios</div>
-            <div style="font-size:.73rem;color:var(--muted);margin-top:.2rem">Modifica fechas y horarios sin cambiar los puntos</div>
-          </button>
-          <button class="btn btn-secundario" style="text-align:left;padding:.75rem 1rem;height:auto"
-            onclick="el('modal-ed-corr').remove();correccionRegenerarCompleta('${csfId}','${numero}',${csf.mes_vigencia},${csf.anio_vigencia},${csf.mes_referencia},${csf.anio_referencia},'${csf.clasificacion}')">
-            <div style="font-weight:600;font-size:.85rem">Regenerar desde cero</div>
-            <div style="font-size:.73rem;color:var(--muted);margin-top:.2rem">Recalcula puntos y visitas. Util para corregir sectores mal asignados</div>
-          </button>
-        </div>
-        <div style="border-top:1px solid var(--border);padding-top:.75rem;font-size:.73rem;color:var(--muted)">
-          Al terminar usa "Enviar a revision del SPF" para retomar el ciclo normal.
-        </div>
-      </div>
-    </div>`
-  document.body.appendChild(modal)
-}
-
-async function correccionRegenerarCompleta(csfId, numero, vigMes, vigAnio, refMes, refAnio, clasif) {
-  if (!confirm('Regenerar completamente la CSF '+numero+'? El numero se mantiene.')) return
-  const { data: csfData } = await APP.sb.from('csf_mensual').select('cuartel_id').eq('id',csfId).single()
-  const cuartelId = csfData?.cuartel_id
-  if (!cuartelId) { toast('No se pudo obtener el cuartel de la CSF','err'); return }
-  await APP.sb.from('csf_visitas_ordenadas').delete().eq('csf_id',csfId)
-  await APP.sb.from('csf_puntos_fvc').delete().eq('csf_id',csfId)
-  const ok = await _generarCSFParaCuartel(cuartelId, refMes, refAnio, vigMes, vigAnio, clasif, csfId)
-  if (ok) toast('CSF regenerada para '+numero,'ok')
-  else toast('Error al regenerar','err')
-  await renderHistorial()
-}
-
-async function verHistorialCorrecciones(csfId, numero) {
-  const { data: corrs } = await APP.sb.from('csf_correcciones').select('*').eq('csf_id',csfId).order('version')
-  if (!corrs?.length) { toast('Sin correcciones registradas','info'); return }
-  const modal = document.createElement('div')
-  modal.id = 'modal-hist-corr'
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:1rem'
-  modal.innerHTML = `
-    <div style="background:var(--surface,#fff);border-radius:12px;width:min(96vw,600px);max-height:88vh;display:flex;flex-direction:column">
-      <div style="padding:.9rem 1.1rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-        <span style="font-weight:700;font-size:.95rem">Historial correcciones — ${numero}</span>
-        <button onclick="el('modal-hist-corr').remove()" style="border:none;background:none;font-size:1.2rem;cursor:pointer">X</button>
-      </div>
-      <div style="flex:1;overflow-y:auto;padding:1rem;display:flex;flex-direction:column;gap:.85rem">
-        ${corrs.map(c=>`<div style="border:1px solid var(--border);border-left:4px solid #F5CBA7;border-radius:8px;padding:.75rem .9rem">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.4rem">
-            <span style="background:#FEF3E2;color:#7B3F00;font-size:.65rem;font-weight:700;padding:2px 7px;border-radius:4px">CORRECCION v${c.version}</span>
-            <span style="font-size:.72rem;color:var(--muted)">${c.solicitada_at?new Date(c.solicitada_at).toLocaleString('es-CL'):'—'}</span>
-          </div>
-          <div style="font-size:.78rem;background:var(--bg-alt,#f5f5f5);padding:.5rem .65rem;border-radius:6px">${c.motivo||'—'}</div>
-        </div>`).join('')}
-      </div>
-      <div style="padding:.75rem 1rem;border-top:1px solid var(--border);text-align:right">
-        <button class="btn btn-secundario" onclick="el('modal-hist-corr').remove()">Cerrar</button>
-      </div>
-    </div>`
-  document.body.appendChild(modal)
+  setTimeout(() => { win.print(); win.close() }, 700)
 }
