@@ -12,6 +12,20 @@
 
 let _csfTab       = 'generar'
 let _csfDatos     = null
+
+// ── FIRMAS DESDE BASE DE DATOS ──────────────────────────
+let _firmaComisarioCache = {}
+async function _cargarFirmaComisario(cuartelId) {
+  if (!cuartelId) return { nombre:'—', grado:'Carabineros de Chile', cargo:'COMISARIO', firma_b64:null }
+  if (_firmaComisarioCache[cuartelId]) return _firmaComisarioCache[cuartelId]
+  const { data } = await APP.sb.from('config_firmas')
+    .select('nombre,grado,cargo,firma_b64')
+    .eq('cuartel_id', cuartelId).eq('rol', 'comisario').single()
+  const firma = data || { nombre:'—', grado:'Carabineros de Chile', cargo:'COMISARIO', firma_b64:null }
+  _firmaComisarioCache[cuartelId] = firma
+  return firma
+}
+
 let _csfMasivaIdx = 0   // índice cuartel procesando en generación masiva
 
 async function renderCSF() {
