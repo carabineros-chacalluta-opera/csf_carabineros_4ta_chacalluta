@@ -1,0 +1,1 @@
+INSERT INTO "public"."usuarios" ("id", "email", "rol", "cuartel_id", "activo", "created_at") VALUES ('40f839cf-7c6b-4b81-baed-581cc0bac667', 'damian.vergara@carabineros.cl', 'administrador', null, true, '2026-04-06 20:07:56.267522+00'), ('4addaaf3-bc36-44c2-a8b0-7881ed680d59', 'spfarica@carabineros.cl', 'validador', null, true, '2026-04-30 18:43:30.472183+00');

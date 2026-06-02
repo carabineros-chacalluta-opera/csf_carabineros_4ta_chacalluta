@@ -1,0 +1,19 @@
+{
+  "name": "CSF Operativa — Prefectura Arica Nro. 1",
+  "short_name": "CSF Arica",
+  "description": "Sistema de Carta de Situación Fronteriza · Carabineros de Chile",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#04742C",
+  "theme_color": "#04742C",
+  "lang": "es",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%2304742C'/><text y='.9em' font-size='80' x='10'>🏔</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
